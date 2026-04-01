@@ -92,7 +92,7 @@ Status convention:
   - Done when: Appendix B documents the style rule clearly and the current
     Smelterl codebase no longer has obvious violations in the touched modules.
 
-- [ ] **Task 3.5: `smelterl_topology` deterministic ordering**
+- [x] **Task 3.5: `smelterl_topology` deterministic ordering**
   - Scope: Stable topological order per target.
   - Tests: Determinism tests on repeated runs.
   - Refinement note (from Task 3.4b): New Smelterl Erlang work should follow
@@ -108,6 +108,10 @@ Status convention:
     replacements, rerun target-set validation (not just per-tree validation) so
     duplicate `AuxId`, auxiliary-category, shared-flavor, and hook-scope
     invariants stay enforced before later pipeline stages.
+  - Refinement note (from Task 3.5): Preserve the new per-target topology
+    contract when remaps or replacements occur: recompute impacted target
+    orders with `smelterl_topology`, keep dependency declaration order as the
+    tie-break, and keep each target root last.
   - Done when: Overridden trees/motherlode/config are reproducible.
 
 - [ ] **Task 3.7: `smelterl_capabilities` discovery output**
