@@ -44,7 +44,7 @@ Status convention:
   - Done when: The Smelterl Erlang source files follow Appendix B structure and
     inline documentation requirements.
 
-- [ ] **Task 3.2c: Smelterl warning/reporting surface**
+- [x] **Task 3.2c: Smelterl warning/reporting surface**
   - Scope: Introduce a proper non-fatal Smelterl warning/reporting surface for
     command-visible warnings that should not abort execution.
   - Scope: Use that warning/reporting surface for motherlode repositories that
@@ -61,6 +61,10 @@ Status convention:
     from the Appendix B-compliant source skeleton (SPDX/REUSE headers,
     `-moduledoc`, section headers, documented exported APIs) so style/docs do
     not drift until the end of the pipeline work.
+  - Refinement note (from Task 3.2c): Route new non-fatal planner diagnostics
+    through `smelterl_log` and cover command-visible warning cases with
+    deterministic tests instead of reintroducing silent skips or ad-hoc
+    `io:format/3` reporting.
   - Done when: All target trees are built deterministically.
 
 - [ ] **Task 3.4: `smelterl_validate` target validation**
