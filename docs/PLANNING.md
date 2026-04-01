@@ -76,7 +76,7 @@ Status convention:
     any later canonicalization by target id.
   - Done when: Invalid target graphs fail early with clear reasons.
 
-- [ ] **Task 3.4b: Smelterl Appendix B case-depth and `maybe` readability rule**
+- [x] **Task 3.4b: Smelterl Appendix B case-depth and `maybe` readability rule**
   - Scope: Update `docs/02_SMELTERL_DESIGN.md` Appendix B to state that
     `maybe` syntax should be used when it materially improves readability, and
     that deeply nested `case` expressions should be refactored when they exceed
@@ -95,6 +95,10 @@ Status convention:
 - [ ] **Task 3.5: `smelterl_topology` deterministic ordering**
   - Scope: Stable topological order per target.
   - Tests: Determinism tests on repeated runs.
+  - Refinement note (from Task 3.4b): New Smelterl Erlang work should follow
+    the Appendix B readability rule for `maybe` and case-depth, using `maybe`
+    or helper extraction when a linear flow would otherwise exceed three nested
+    `case` expressions.
   - Done when: Same input yields same order every run.
 
 - [ ] **Task 3.6: `smelterl_overrides` nugget/config/aux remap**
