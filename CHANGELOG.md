@@ -42,6 +42,14 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Centralized shared Smelterl plan-pipeline Erlang types in `smelterl.erl` and
+  updated `smelterl_tree`, `smelterl_topology`, `smelterl_overrides`, and
+  `smelterl_validate` to consume those canonical types via remote type
+  references instead of repeating local declarations.
+- Clarified `docs/DESIGN.md` so cross-module shared Smelterl types are
+  explicitly sourced from `smelterl.erl` and future tasks are expected to
+  reuse those canonical types.
+
 - Updated `smelterl plan` to run capability discovery after override
   application, report capability-validation failures at command level, and keep
   the remaining not-implemented stub only for plans whose capabilities are
