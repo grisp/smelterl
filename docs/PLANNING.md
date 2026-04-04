@@ -158,7 +158,7 @@ Status convention:
     implementation modules instead of duplicating shared `-type` declarations.
   - Done when: Consolidated config is deterministic and spec-compliant.
 
-- [ ] **Task 3.9: `smelterl_gen_defconfig` plan-stage model build**
+- [x] **Task 3.9: `smelterl_gen_defconfig` plan-stage model build**
   - Scope: Build structured defconfig model (not rendered file) at plan time.
   - Tests: Unit tests for cumulative keys and wrapper hook injection.
   - Done when: Model can be rendered later without re-resolution.
@@ -215,6 +215,10 @@ Status convention:
 - [ ] **Task 4.5: `smelterl_gen_defconfig` generate-stage render**
   - Scope: Render selected target defconfig from plan model.
   - Tests: Golden output test.
+  - Refinement note (from Task 3.9): Consume the precomputed
+    `smelterl:defconfig_model()` directly; cumulative entries already carry
+    resolved paths, injected wrapper hooks, and final quoted value strings, so
+    the render stage must not re-split or re-resolve them.
   - Done when: Generate stage does render only (no resolution).
 
 - [ ] **Task 4.6: `smelterl_gen_context` selected-target context**
@@ -243,4 +247,14 @@ Status convention:
   - Done when: Final export has one merged tree with preserved target README content.
 
 - [ ] **Task 4.9: `smelterl_gen_manifest` generate-stage finalize**
-  - Scope: Finalize mani
+  - Scope: Finalize manifest from seed (runtime fields, legal sections, integrity).
+  - Tests: Golden manifest test with and without Buildroot legal data.
+  - Done when:
+    - `capabilities` is firmware-only.
+    - `sdk_outputs` is a separate top-level section.
+
+- [ ] **Task 4.10: Plan/generate integration regression tests**
+  - Scope: End-to-end smelterl tests for one main + one auxiliary sample.
+  - Tests: Integration tests asserting no dependency resolution in generate.
+  - Done when: Pipeline determinism and option gating are verified.
+
