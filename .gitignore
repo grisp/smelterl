@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Erlang
+.rebar3
+_*
+.eunit
+*.o
+*.beam
+*.plt
+*.swp
+*.swo
+.erlang.cookie
+ebin
+log
+erl_crash.dump
+.rebar
+logs
+_build
+.idea
+rebar3.crashdump
+doc
+
+# asdf
+.tool-versions

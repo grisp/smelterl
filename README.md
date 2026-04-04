@@ -1,7 +1,6 @@
 # smelterl
 
-Standalone repository for the `smelterl` Erlang planner/generator extracted
-from `grisp_alloy`.
+Standalone repository for the `smelterl` Erlang planner/generator for `grisp_alloy`.
 
 Development context:
 
