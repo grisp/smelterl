@@ -8,6 +8,12 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added `smelterl_gen_manifest` with plan-stage manifest seed preparation,
+  including deterministic repository deduplication and repo-id assignment,
+  firmware-capability and `sdk_outputs` seed shaping, external-component seed
+  collection, and dedicated Common Test coverage for manifest-seed shape and
+  target-arch validation.
+
 - Added `smelterl_gen_defconfig` with plan-stage defconfig model building,
   cumulative-key specification under `priv/defconfig-keys.spec`, target-local
   wrapper-hook injection, and dedicated Common Test coverage for cumulative
@@ -52,6 +58,9 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Extended `smelterl.erl` with canonical manifest/build-info shared types so
+  later plan/generate stages can reuse one manifest-seed source of truth.
+
 - Updated `smelterl plan` to build per-target defconfig models after config
   consolidation, merging normalized extra-config values into the substitution
   environment while keeping plan serialization/rendering for later tasks.

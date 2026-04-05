@@ -177,7 +177,7 @@ Status convention:
   - Tests: Unit tests for cumulative keys and wrapper hook injection.
   - Done when: Model can be rendered later without re-resolution.
 
-- [ ] **Task 3.10: `smelterl_gen_manifest` plan-stage seed build**
+- [x] **Task 3.10: `smelterl_gen_manifest` plan-stage seed build**
   - Scope: Build deterministic manifest seed (`auxiliary_products`, firmware `capabilities`, top-level `sdk_outputs` seed).
   - Tests: Unit tests for repository dedup/id stability and seed shape.
   - Refinement note (from Task 3.7): Consume the validated
@@ -193,6 +193,10 @@ Status convention:
     values, not raw CLI strings: `ALLOY_MOTHERLODE` is injected by
     `smelterl plan`, the user may not override it, and later stages should read
     the normalized map/key set from the serialized plan.
+  - Refinement note (from Task 3.10): Consume the precomputed manifest seed
+    from `smelterl_gen_manifest:prepare_seed/7` and wire in real
+    build-info/motherlode repository provenance; do not synthesize placeholder
+    repository records during serialization.
   - Done when: Plan can be consumed by generate without recomputation.
 
 - [ ] **Task 3.12: `build_plan.env` export writer**

@@ -9,6 +9,7 @@
         smelterl_cmd_plan,
         smelterl_config,
         smelterl_gen_defconfig,
+        smelterl_gen_manifest,
         smelterl_log,
         smelterl_motherlode,
         smelterl_overrides,

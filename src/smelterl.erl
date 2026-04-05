@@ -14,6 +14,9 @@ delegates argument handling to `smelterl_cli`.
 -export([main/1]).
 -export_type([
     smelterl_config/0,
+    repo_id/0,
+    vcs_info/0,
+    smelterl_build_info/0,
     target_id/0,
     nugget_id/0,
     motherlode/0,
@@ -29,6 +32,7 @@ delegates argument handling to `smelterl_cli`.
     config/0,
     target_configs/0,
     defconfig_model/0,
+    manifest_seed/0,
     firmware_output_spec/0,
     firmware_parameter_spec/0,
     sdk_output_spec/0,
@@ -52,13 +56,32 @@ and the version string is shown by `--version`.
 -doc "Identifier for one planned build target (`main` or an auxiliary id).".
 -type target_id() :: atom().
 
+-doc "Manifest repository identifier used by nugget and build-environment records.".
+-type repo_id() :: atom().
+
 -doc "Canonical nugget identifier used across the plan and generate pipelines.".
 -type nugget_id() :: atom().
+
+-doc "Version-control metadata attached to one repository provenance record.".
+-type vcs_info() :: #{
+    name := binary(),
+    url := binary(),
+    commit := binary(),
+    describe := binary(),
+    dirty := boolean()
+}.
+
+-doc "Build-time provenance for the smelterl generator itself.".
+-type smelterl_build_info() :: #{
+    name := binary(),
+    relpath := binary(),
+    repo := vcs_info()
+}.
 
 -doc "Loaded motherlode structure keyed by nugget id plus repository metadata.".
 -type motherlode() :: #{
     nuggets := #{nugget_id() => map()},
-    repositories := map()
+    repositories := #{repo_id() => vcs_info()}
 }.
 
 -doc "Dependency tree for one target, with the root nugget and nugget-only edges.".
@@ -110,6 +133,21 @@ and the version string is shown by `--version`.
 -type defconfig_model() :: #{
     regular := [{binary(), binary()}],
     cumulative := [{binary(), binary()}]
+}.
+
+-doc "Deterministic main-target manifest model prepared during `plan`.".
+-type manifest_seed() :: #{
+    product := nugget_id(),
+    target_arch := binary(),
+    product_fields := map(),
+    repositories := [{repo_id(), map()}],
+    nugget_repo_map := #{nugget_id() => repo_id() | undefined},
+    nuggets := [map()],
+    auxiliary_products := [map()],
+    capabilities := map(),
+    sdk_outputs := [map()],
+    external_components := [map()],
+    smelterl_repository := repo_id()
 }.
 
 -doc "Plan-stage selectable firmware output metadata carried into later generators.".
