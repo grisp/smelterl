@@ -13,6 +13,20 @@ Task ID note:
 - task IDs intentionally keep the original shared-planning numbering so
   migrated history and replayed commits remain traceable to their source tasks.
 
+Cross-repository development note:
+- when `smelterl/` is developed from a `grisp_alloy` superproject checkout,
+  Smelterl-owned work is still tracked here,
+- if a Smelterl task also needs Alloy-side changes, create or use a linked
+  `grisp_alloy` task for the follow-up submodule-pointer/docs/orchestration
+  update,
+- keep only one linked task `[IN_PROGRESS]` at a time,
+- complete and commit the Smelterl task first, then move the linked
+  `grisp_alloy` task to `[IN_PROGRESS]` so the superproject records the new
+  submodule commit.
+- in a standalone `smelterl` checkout, still track Smelterl-owned work here
+  and call out any required downstream `grisp_alloy` synchronization
+  explicitly.
+
 Status convention:
 - TODO: `- [ ] **Task ...**`
 - IN_PROGRESS: `- [ ] **[IN_PROGRESS] Task ...**`
@@ -257,4 +271,3 @@ Status convention:
   - Scope: End-to-end smelterl tests for one main + one auxiliary sample.
   - Tests: Integration tests asserting no dependency resolution in generate.
   - Done when: Pipeline determinism and option gating are verified.
-
