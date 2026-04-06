@@ -18,7 +18,7 @@
     plan_warns_for_multiple_missing_registries_in_sorted_order/1,
     plan_reports_invalid_motherlode_path/1,
     plan_rejects_unknown_argument/1,
-    valid_plan_args_report_not_implemented/1
+    valid_plan_args_write_build_plan_term/1
 ]).
 
 all() ->
@@ -37,7 +37,7 @@ all() ->
         plan_warns_for_multiple_missing_registries_in_sorted_order,
         plan_reports_invalid_motherlode_path,
         plan_rejects_unknown_argument,
-        valid_plan_args_report_not_implemented
+        valid_plan_args_write_build_plan_term
     ].
 
 global_help_lists_plan_command(_Config) ->
@@ -370,13 +370,12 @@ plan_warns_when_repository_is_missing_registry(_Config) ->
         "--motherlode", MotherlodeDir,
         "--output-plan", "/tmp/build_plan.term"
     ]),
-    assert_equal(1, Status),
+    assert_equal(0, Status),
     assert_contains(
         Output,
         <<"warning: motherlode repository '">>
     ),
-    assert_contains(Output, <<"missing_registry' has no .nuggets registry">>),
-    assert_contains(Output, <<"plan execution not implemented yet.">>).
+    assert_contains(Output, <<"missing_registry' has no .nuggets registry">>).
 
 plan_warns_for_multiple_missing_registries_in_sorted_order(_Config) ->
     MotherlodeDir = create_valid_motherlode(),
@@ -388,7 +387,7 @@ plan_warns_for_multiple_missing_registries_in_sorted_order(_Config) ->
         "--motherlode", MotherlodeDir,
         "--output-plan", "/tmp/build_plan.term"
     ]),
-    assert_equal(1, Status),
+    assert_equal(0, Status),
     assert_order(
         Output,
         <<"aaa_missing' has no .nuggets registry">>,
@@ -411,20 +410,56 @@ plan_rejects_unknown_argument(_Config) ->
     assert_equal(2, Status),
     assert_contains(Output, <<"plan: unknown argument '--bogus'">>).
 
-valid_plan_args_report_not_implemented(_Config) ->
+valid_plan_args_write_build_plan_term(_Config) ->
     MotherlodeDir = create_valid_motherlode(),
+    RepoDir = filename:join(MotherlodeDir, "builtin"),
+    ok = write_repo_info(
+        RepoDir,
+        [
+            {"NAME", "demo-builtin"},
+            {"URL", "https://example.com/demo/builtin.git"},
+            {"COMMIT", "1111111111111111111111111111111111111111"},
+            {"DESCRIBE", "v1.2.3"},
+            {"DIRTY", "false"}
+        ]
+    ),
+    OutputDir = make_temp_dir("smelterl-plan-output"),
+    OutputPlan = filename:join(OutputDir, "build_plan.term"),
     {Status, Output} = run_main([
         "plan",
         "--product", "demo",
         "--motherlode", MotherlodeDir,
-        "--output-plan", "/tmp/build_plan.term",
+        "--output-plan", OutputPlan,
         "--output-plan-env", "/tmp/build_plan.env",
         "--extra-config", "FOO=bar",
         "--extra-config", "BAZ=qux",
         "--verbose"
     ]),
-    assert_equal(1, Status),
-    assert_contains(Output, <<"plan execution not implemented yet.">>).
+    assert_equal(0, Status),
+    assert_equal(<<>>, Output),
+    {ok, Plan} = smelterl_plan:read_file(OutputPlan),
+    assert_equal(demo, maps:get(product, Plan)),
+    assert_equal([], maps:get(auxiliary_ids, Plan)),
+    ExtraConfig = maps:get(extra_config, Plan),
+    assert_equal(<<"bar">>, maps:get(<<"FOO">>, ExtraConfig)),
+    assert_equal(<<"qux">>, maps:get(<<"BAZ">>, ExtraConfig)),
+    assert_equal(
+        <<"${ALLOY_MOTHERLODE}">>,
+        maps:get(<<"ALLOY_MOTHERLODE">>, ExtraConfig)
+    ),
+    Targets = maps:get(targets, Plan),
+    MainTarget = maps:get(main, Targets),
+    assert_equal(main, maps:get(id, MainTarget)),
+    assert_equal(main, maps:get(kind, MainTarget)),
+    assert_equal(demo, maps:get(root, maps:get(tree, MainTarget))),
+    ManifestSeed = maps:get(manifest_seed, Plan),
+    RepoId = repo_id_by_url(
+        maps:get(repositories, ManifestSeed),
+        <<"https://example.com/demo/builtin.git">>
+    ),
+    NuggetRepoMap = maps:get(nugget_repo_map, ManifestSeed),
+    assert_equal(RepoId, maps:get(demo, NuggetRepoMap)),
+    assert_equal(RepoId, maps:get(platform_core, NuggetRepoMap)).
 
 run_main(Argv) ->
     ScriptDir = filename:dirname(code:which(?MODULE)),
@@ -505,6 +540,9 @@ create_valid_motherlode() ->
             "{nugget, <<\"1.0\">>, [\n",
             "    {id, demo},\n",
             "    {category, feature},\n",
+            "    {name, <<\"Demo Product\">>},\n",
+            "    {description, <<\"Demo plan product\">>},\n",
+            "    {version, <<\"1.0.0\">>},\n",
             "    {depends_on, [\n",
             "        {required, nugget, builder_core},\n",
             "        {required, nugget, toolchain_core},\n",
@@ -541,7 +579,8 @@ create_valid_motherlode() ->
         [
             "{nugget, <<\"1.0\">>, [\n",
             "    {id, platform_core},\n",
-            "    {category, platform}\n",
+            "    {category, platform},\n",
+            "    {exports, [{target_arch_triplet, <<\"arm-buildroot-linux-gnueabihf\">>}]}\n",
             "]}.\n"
         ]
     ),
@@ -571,6 +610,13 @@ create_valid_motherlode() ->
 create_repo_without_registry(MotherlodeDir, RepoName) ->
     ok = file:make_dir(filename:join(MotherlodeDir, RepoName)).
 
+write_repo_info(RepoDir, Pairs) ->
+    Contents = [
+        [Key, "=", Value, "\n"]
+     || {Key, Value} <- Pairs
+    ],
+    file:write_file(filename:join(RepoDir, ".alloy_repo_info"), Contents).
+
 write_repo(MotherlodeDir, RepoName, Nuggets) ->
     RepoDir = filename:join(MotherlodeDir, RepoName),
     RegistryEntries = [
@@ -597,6 +643,19 @@ write_repo(MotherlodeDir, RepoName, Nuggets) ->
         Nuggets
     ),
     ok.
+
+repo_id_by_url(Repositories, Url) ->
+    case lists:dropwhile(
+        fun({_RepoId, Fields}) ->
+            maps:get(url, Fields) =/= Url
+        end,
+        Repositories
+    ) of
+        [{RepoId, _Fields} | _] ->
+            RepoId;
+        [] ->
+            ct:fail("Expected repository URL ~tp in ~tp", [Url, Repositories])
+    end.
 
 make_temp_dir(Prefix) ->
     make_temp_dir(Prefix, 0).

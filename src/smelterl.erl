@@ -14,6 +14,7 @@ delegates argument handling to `smelterl_cli`.
 -export([main/1]).
 -export_type([
     smelterl_config/0,
+    file_path/0,
     repo_id/0,
     vcs_info/0,
     smelterl_build_info/0,
@@ -31,7 +32,11 @@ delegates argument handling to `smelterl_cli`.
     config_entry/0,
     config/0,
     target_configs/0,
+    extra_config/0,
+    target_kind/0,
     defconfig_model/0,
+    build_target/0,
+    build_plan/0,
     manifest_seed/0,
     firmware_output_spec/0,
     firmware_parameter_spec/0,
@@ -52,6 +57,9 @@ and the version string is shown by `--version`.
     command_handlers := #{atom() => module()},
     version := string()
 }.
+
+-doc "UTF-8 filesystem path carried inside Smelterl terms.".
+-type file_path() :: binary().
 
 -doc "Identifier for one planned build target (`main` or an auxiliary id).".
 -type target_id() :: atom().
@@ -129,10 +137,39 @@ and the version string is shown by `--version`.
 -doc "Per-target consolidated configs keyed by `main` or auxiliary id.".
 -type target_configs() :: #{target_id() => config()}.
 
+-doc "Normalized plan-time extra-config map keyed by environment variable name.".
+-type extra_config() :: #{binary() => binary()}.
+
+-doc "Build-plan target role used by generate-time target selection.".
+-type target_kind() :: main | auxiliary.
+
 -doc "Plan-stage merged defconfig data rendered later by `generate`.".
 -type defconfig_model() :: #{
     regular := [{binary(), binary()}],
     cumulative := [{binary(), binary()}]
+}.
+
+-doc "Serialized target entry carried inside `build_plan.term`.".
+-type build_target() :: #{
+    id := target_id(),
+    kind := target_kind(),
+    tree := nugget_tree(),
+    topology := nugget_topology_order(),
+    motherlode := motherlode(),
+    config := config(),
+    defconfig := defconfig_model(),
+    capabilities := firmware_capabilities(),
+    aux_root => nugget_id(),
+    constraints => [auxiliary_constraint_prop()]
+}.
+
+-doc "Full plan payload consumed by later `generate` steps.".
+-type build_plan() :: #{
+    product := nugget_id(),
+    extra_config := extra_config(),
+    targets := #{target_id() => build_target()},
+    auxiliary_ids := [target_id()],
+    manifest_seed := manifest_seed()
 }.
 
 -doc "Deterministic main-target manifest model prepared during `plan`.".

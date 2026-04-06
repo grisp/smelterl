@@ -79,12 +79,17 @@ load_repository(RepoPath, RepoName, Motherlode0) ->
             case parse_registry(RepoPath, RegistryPath) of
                 {ok, Registry} ->
                     RepoId = list_to_atom(RepoName),
+                    Motherlode1 = maybe_attach_repository_info(
+                        RepoId,
+                        RepoPath,
+                        Motherlode0
+                    ),
                     load_nuggets(
                         RepoPath,
                         RepoId,
                         maps:get(defaults, Registry),
                         maps:get(nuggets, Registry),
-                        Motherlode0
+                        Motherlode1
                     );
                 {error, _} = Error ->
                     Error
@@ -135,6 +140,17 @@ add_nugget(NuggetId, Nugget, Motherlode0) ->
                     NuggetId,
                     maps:get(repo_path, Existing),
                     maps:get(repo_path, Nugget)}}
+    end.
+
+maybe_attach_repository_info(RepoId, RepoPath, Motherlode0) ->
+    case smelterl_vcs:info(RepoPath) of
+        undefined ->
+            Motherlode0;
+        RepoInfo ->
+            Repositories0 = maps:get(repositories, Motherlode0, #{}),
+            Motherlode0#{
+                repositories := maps:put(RepoId, RepoInfo, Repositories0)
+            }
     end.
 
 parse_registry(RepoPath, RegistryPath) ->

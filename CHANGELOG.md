@@ -8,6 +8,10 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added `smelterl_plan`, `smelterl_file`, and `smelterl_vcs` to serialize
+  versioned `build_plan.term` files, read them back for later generate-stage
+  consumption, emit UTF-8 Erlang term files consistently, and attach
+  repository provenance from `.alloy_repo_info` or git.
 - Added `smelterl_gen_manifest` with plan-stage manifest seed preparation,
   including deterministic repository deduplication and repo-id assignment,
   firmware-capability and `sdk_outputs` seed shaping, external-component seed
@@ -58,6 +62,18 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl plan` to complete Task 3.11 end to end: it now loads real
+  Smelterl build provenance, carries target-local motherlode/config/defconfig
+  data plus normalized `extra_config` into a serialized build plan, builds the
+  main manifest seed during planning, and writes a successful `build_plan.term`
+  instead of stopping at the previous not-implemented stub.
+- Updated the motherlode loader to preserve per-repository provenance in the
+  in-memory motherlode so manifest-seed generation can reuse actual staged
+  repository metadata rather than placeholder records.
+- Updated Common Test coverage with plan roundtrip tests and an end-to-end
+  `smelterl plan` success case that verifies normalized extra-config
+  persistence and `.alloy_repo_info` provenance flowing into the serialized
+  plan.
 - Extended `smelterl.erl` with canonical manifest/build-info shared types so
   later plan/generate stages can reuse one manifest-seed source of truth.
 

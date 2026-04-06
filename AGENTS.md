@@ -21,10 +21,10 @@ Working model:
 - when `smelterl/` is checked out inside `grisp_alloy`, daily development still
   starts from the `grisp_alloy` root,
 - Smelterl-owned work is tracked in `smelterl/docs/PLANNING.md`,
-- if a Smelterl task also requires Alloy-side changes, keep a linked
-  `grisp_alloy` follow-up task and commit the Smelterl repository first,
-- only after the Smelterl commit exists should the linked `grisp_alloy` task
-  record the new submodule commit plus any Alloy-side code/docs changes,
+- if a Smelterl task also requires substantive Alloy-side changes, keep a
+  linked `grisp_alloy` follow-up task and commit the Smelterl repository first,
+- if the only later Alloy-side change is a submodule-pointer sync, that sync
+  may be deferred and batched until development returns to `grisp_alloy`,
 - when `smelterl` is checked out on its own, the same Smelterl-local planning,
   history, changelog, and commit-message rules still apply here, but the agent
   must explicitly call out any later `grisp_alloy` follow-up that would be
@@ -38,8 +38,11 @@ Rules:
 - when a task depends on Alloy-owned design documents, follow the local/external
   links provided by the redirect stubs under `docs/`.
 - do not treat a cross-repository request as one unowned task; use linked
-  repo-local tasks and keep only the currently edited repository task
-  `[IN_PROGRESS]`.
+  repo-local tasks for substantive changes in both repositories and keep only
+  the currently edited repository task `[IN_PROGRESS]`.
+- do not create an immediate `grisp_alloy` task when the only later Alloy-side
+  work is a batched submodule-pointer sync; record that deferred sync in
+  completion reporting/history instead.
 - use Smelterl-local workflow artifacts for Smelterl tasks:
   - `smelterl/docs/PLANNING.md`,
   - `smelterl/history/`,

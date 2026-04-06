@@ -186,7 +186,7 @@ Status convention:
     from nugget metadata.
   - Done when: Seed is complete and independent from runtime/legal inputs.
 
-- [ ] **Task 3.11: `smelterl_plan` serialization (`build_plan.term`)**
+- [x] **Task 3.11: `smelterl_plan` serialization (`build_plan.term`)**
   - Scope: Serialize full plan structure and version markers.
   - Tests: Roundtrip read/write tests.
   - Refinement note (from Task 3.8): Persist normalized plan extra-config
@@ -202,6 +202,10 @@ Status convention:
 - [ ] **Task 3.12: `build_plan.env` export writer**
   - Scope: Bash-friendly target list and loop metadata export.
   - Tests: Golden test for env file content.
+  - Refinement note (from Task 3.11): Derive loop ordering from serialized
+    `auxiliary_ids` rather than iterating the unordered `targets` map, and
+    reuse the normalized root-level `extra_config` payload instead of
+    re-parsing CLI strings.
   - Done when: Orchestrator can source it for target loops.
 
 ## Phase 2: Smelterl Generate Pipeline (original Alloy Phase 4)

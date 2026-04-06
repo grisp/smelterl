@@ -76,7 +76,7 @@ run_plan(Opts) ->
         {ok, ExtraConfig} ?= parse_extra_config(Opts),
         {ok, OverriddenTargets, OverriddenTopologyOrders, TargetMotherlodes} ?=
             apply_overrides(Targets, TopologyOrders, Motherlode),
-        {ok, _Capabilities} ?= discover_capabilities(
+        {ok, Capabilities} ?= discover_capabilities(
             OverriddenTargets,
             OverriddenTopologyOrders,
             TargetMotherlodes
@@ -91,14 +91,40 @@ run_plan(Opts) ->
             TargetConfigs0,
             ExtraConfig
         ),
-        {ok, _DefconfigModels} ?= build_defconfig_models(
+        {ok, DefconfigModels} ?= build_defconfig_models(
             OverriddenTargets,
             OverriddenTopologyOrders,
             TargetMotherlodes,
             TargetConfigs
         ),
-        smelterl_log:error("plan execution not implemented yet.~n", []),
-        1
+        {ok, BuildInfo} ?= load_build_info(),
+        {ok, ManifestSeed} ?= build_manifest_seed(
+            ProductId,
+            OverriddenTargets,
+            OverriddenTopologyOrders,
+            TargetMotherlodes,
+            TargetConfigs,
+            Capabilities,
+            BuildInfo
+        ),
+        {ok, PlanTargets} ?= build_plan_targets(
+            OverriddenTargets,
+            OverriddenTopologyOrders,
+            TargetMotherlodes,
+            TargetConfigs,
+            DefconfigModels,
+            Capabilities
+        ),
+        AuxiliaryIds = [maps:get(id, Auxiliary) || Auxiliary <- maps:get(auxiliaries, OverriddenTargets, [])],
+        {ok, Plan} ?= build_plan(
+            ProductId,
+            ExtraConfig,
+            PlanTargets,
+            AuxiliaryIds,
+            ManifestSeed
+        ),
+        ok ?= write_plan(maps:get(output_plan, Opts), Plan),
+        0
     else
         {load_error, Reason} ->
             smelterl_log:error("~ts~n", [format_load_error(Reason)]),
@@ -123,6 +149,12 @@ run_plan(Opts) ->
             1;
         {defconfig_error, Reason} ->
             smelterl_log:error("~ts~n", [format_defconfig_error(Reason)]),
+            1;
+        {manifest_error, Reason} ->
+            smelterl_log:error("~ts~n", [format_manifest_error(Reason)]),
+            1;
+        {plan_error, Reason} ->
+            smelterl_log:error("~ts~n", [format_plan_error(Reason)]),
             1;
         {topology_error, Reason} ->
             smelterl_log:error("~ts~n", [format_topology_error(Reason)]),
@@ -385,6 +417,196 @@ build_defconfig_models(
             );
         {error, Reason} ->
             {defconfig_error, {TargetId, Reason}}
+    end.
+
+load_build_info() ->
+    case read_build_info_file() of
+        {ok, BuildInfo} ->
+            {ok, BuildInfo};
+        {error, missing_build_info} ->
+            infer_build_info_from_checkout();
+        {error, Reason} ->
+            {manifest_error, Reason}
+    end.
+
+read_build_info_file() ->
+    case code:priv_dir(smelterl) of
+        {error, bad_name} ->
+            {error, missing_build_info};
+        PrivDir ->
+            BuildInfoPath = filename:join(PrivDir, "build_info.term"),
+            case file:consult(BuildInfoPath) of
+                {ok, [BuildInfo]} ->
+                    {ok, BuildInfo};
+                {ok, _Terms} ->
+                    {error, invalid_build_info_file};
+                {error, _Reason} ->
+                    {error, missing_build_info}
+            end
+    end.
+
+infer_build_info_from_checkout() ->
+    maybe
+        {ok, AppRoot} ?= find_checkout_root(),
+        case smelterl_vcs:info(AppRoot) of
+            undefined ->
+                {manifest_error, missing_build_info};
+            RepoInfo ->
+                {ok,
+                    #{
+                        name => <<"smelterl">>,
+                        relpath => <<>>,
+                        repo => RepoInfo
+                    }}
+        end
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+find_checkout_root() ->
+    BeamPath = code:which(smelterl),
+    BeamDir = filename:dirname(BeamPath),
+    find_checkout_root(filename:dirname(BeamDir)).
+
+find_checkout_root("/") ->
+    {manifest_error, missing_build_info};
+find_checkout_root(Path) ->
+    case {
+        filelib:is_regular(filename:join(Path, "rebar.config")),
+        filelib:is_regular(filename:join(Path, "src/smelterl.app.src"))
+    } of
+        {true, true} ->
+            {ok, Path};
+        _ ->
+            Parent = filename:dirname(Path),
+            case Parent =:= Path of
+                true ->
+                    {manifest_error, missing_build_info};
+                false ->
+                    find_checkout_root(Parent)
+            end
+    end.
+
+build_manifest_seed(
+    ProductId,
+    Targets,
+    TopologyOrders,
+    TargetMotherlodes,
+    TargetConfigs,
+    Capabilities,
+    BuildInfo
+) ->
+    MainTopology = maps:get(main, TopologyOrders),
+    MainMotherlode = maps:get(main, TargetMotherlodes),
+    MainConfig = maps:get(main, TargetConfigs),
+    AuxiliaryMeta = maps:get(auxiliaries, Targets, []),
+    case smelterl_gen_manifest:prepare_seed(
+        ProductId,
+        MainTopology,
+        MainMotherlode,
+        MainConfig,
+        Capabilities,
+        AuxiliaryMeta,
+        BuildInfo
+    ) of
+        {ok, _Seed} = Ok ->
+            Ok;
+        {error, Reason} ->
+            {manifest_error, Reason}
+    end.
+
+build_plan_targets(
+    Targets,
+    TopologyOrders,
+    TargetMotherlodes,
+    TargetConfigs,
+    DefconfigModels,
+    Capabilities
+) ->
+    MainTree = maps:get(main, Targets),
+    MainTarget = #{
+        id => main,
+        kind => main,
+        tree => MainTree,
+        topology => maps:get(main, TopologyOrders),
+        motherlode => maps:get(main, TargetMotherlodes),
+        config => maps:get(main, TargetConfigs),
+        defconfig => maps:get(main, DefconfigModels),
+        capabilities => Capabilities
+    },
+    build_plan_targets(
+        maps:get(auxiliaries, Targets, []),
+        TopologyOrders,
+        TargetMotherlodes,
+        TargetConfigs,
+        DefconfigModels,
+        Capabilities,
+        #{main => MainTarget}
+    ).
+
+build_plan_targets(
+    [],
+    _TopologyOrders,
+    _TargetMotherlodes,
+    _TargetConfigs,
+    _DefconfigModels,
+    _Capabilities,
+    Acc
+) ->
+    {ok, Acc};
+build_plan_targets(
+    [Auxiliary | Rest],
+    TopologyOrders,
+    TargetMotherlodes,
+    TargetConfigs,
+    DefconfigModels,
+    Capabilities,
+    Acc0
+) ->
+    TargetId = maps:get(id, Auxiliary),
+    Target = #{
+        id => TargetId,
+        kind => auxiliary,
+        aux_root => maps:get(root_nugget, Auxiliary),
+        constraints => maps:get(constraints, Auxiliary, []),
+        tree => maps:get(tree, Auxiliary),
+        topology => maps:get(TargetId, TopologyOrders),
+        motherlode => maps:get(TargetId, TargetMotherlodes),
+        config => maps:get(TargetId, TargetConfigs),
+        defconfig => maps:get(TargetId, DefconfigModels),
+        capabilities => Capabilities
+    },
+    build_plan_targets(
+        Rest,
+        TopologyOrders,
+        TargetMotherlodes,
+        TargetConfigs,
+        DefconfigModels,
+        Capabilities,
+        maps:put(TargetId, Target, Acc0)
+    ).
+
+build_plan(ProductId, ExtraConfig, PlanTargets, AuxiliaryIds, ManifestSeed) ->
+    case smelterl_plan:new(
+        ProductId,
+        ExtraConfig,
+        PlanTargets,
+        AuxiliaryIds,
+        ManifestSeed
+    ) of
+        {ok, _Plan} = Ok ->
+            Ok;
+        {error, Reason} ->
+            {plan_error, Reason}
+    end.
+
+write_plan(Path, Plan) ->
+    case smelterl_plan:write_file(Path, Plan) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            {plan_error, Reason}
     end.
 
 target_tree(Targets, main) ->
@@ -889,6 +1111,31 @@ format_defconfig_error({TargetId, Reason}) ->
     );
 format_defconfig_error(Reason) ->
     io_lib:format("plan: defconfig model build failed: ~tp", [Reason]).
+
+format_manifest_error(missing_build_info) ->
+    "plan: unable to determine smelterl build provenance";
+format_manifest_error(invalid_build_info_file) ->
+    "plan: invalid smelterl build_info.term";
+format_manifest_error({missing_target_arch_triplet, ProductId}) ->
+    io_lib:format(
+        "plan: manifest seed requires target_arch_triplet export for product '~ts'",
+        [atom_to_list(ProductId)]
+    );
+format_manifest_error(Reason) ->
+    io_lib:format("plan: manifest seed build failed: ~tp", [Reason]).
+
+format_plan_error({open_failed, Path, Posix}) ->
+    io_lib:format(
+        "plan: failed to open build plan output '~ts': ~tp",
+        [Path, Posix]
+    );
+format_plan_error({write_failed, Reason}) ->
+    io_lib:format(
+        "plan: failed to write build plan output: ~tp",
+        [Reason]
+    );
+format_plan_error(Reason) ->
+    io_lib:format("plan: build plan serialization failed: ~tp", [Reason]).
 
 format_version(undefined) ->
     "undefined";

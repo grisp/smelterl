@@ -8,14 +8,17 @@
         smelterl_capabilities,
         smelterl_cmd_plan,
         smelterl_config,
+        smelterl_file,
         smelterl_gen_defconfig,
         smelterl_gen_manifest,
         smelterl_log,
         smelterl_motherlode,
         smelterl_overrides,
+        smelterl_plan,
         smelterl_topology,
         smelterl_tree,
-        smelterl_validate
+        smelterl_validate,
+        smelterl_vcs
     ]},
     {registered, []},
     {applications, [kernel, stdlib]},
