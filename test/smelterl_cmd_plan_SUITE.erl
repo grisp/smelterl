@@ -425,12 +425,13 @@ valid_plan_args_write_build_plan_term(_Config) ->
     ),
     OutputDir = make_temp_dir("smelterl-plan-output"),
     OutputPlan = filename:join(OutputDir, "build_plan.term"),
+    OutputPlanEnv = filename:join(OutputDir, "build_plan.env"),
     {Status, Output} = run_main([
         "plan",
         "--product", "demo",
         "--motherlode", MotherlodeDir,
         "--output-plan", OutputPlan,
-        "--output-plan-env", "/tmp/build_plan.env",
+        "--output-plan-env", OutputPlanEnv,
         "--extra-config", "FOO=bar",
         "--extra-config", "BAZ=qux",
         "--verbose"
@@ -456,6 +457,13 @@ valid_plan_args_write_build_plan_term(_Config) ->
     RepoId = repo_id_by_url(
         maps:get(repositories, ManifestSeed),
         <<"https://example.com/demo/builtin.git">>
+    ),
+    {ok, PlanEnvContents} = file:read_file(OutputPlanEnv),
+    assert_contains(PlanEnvContents, <<"ALLOY_PLAN_PRODUCT='demo'">>),
+    assert_contains(PlanEnvContents, <<"ALLOY_PLAN_TARGET_IDS=('main')">>),
+    assert_contains(
+        PlanEnvContents,
+        <<"[\'ALLOY_MOTHERLODE\']='${ALLOY_MOTHERLODE}'">>
     ),
     NuggetRepoMap = maps:get(nugget_repo_map, ManifestSeed),
     assert_equal(RepoId, maps:get(demo, NuggetRepoMap)),

@@ -124,6 +124,7 @@ run_plan(Opts) ->
             ManifestSeed
         ),
         ok ?= write_plan(maps:get(output_plan, Opts), Plan),
+        ok ?= maybe_write_plan_env(maps:get(output_plan_env, Opts, undefined), Plan),
         0
     else
         {load_error, Reason} ->
@@ -603,6 +604,18 @@ build_plan(ProductId, ExtraConfig, PlanTargets, AuxiliaryIds, ManifestSeed) ->
 
 write_plan(Path, Plan) ->
     case smelterl_plan:write_file(Path, Plan) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            {plan_error, Reason}
+    end.
+
+maybe_write_plan_env(undefined, _Plan) ->
+    ok;
+maybe_write_plan_env([], _Plan) ->
+    ok;
+maybe_write_plan_env(Path, Plan) ->
+    case smelterl_plan:write_env_file(Path, Plan) of
         ok ->
             ok;
         {error, Reason} ->

@@ -62,6 +62,15 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl plan` to write the optional `build_plan.env` summary when
+  `--output-plan-env` is provided, exposing deterministic bash loop metadata
+  (`ALLOY_PLAN_AUXILIARY_IDS`, `ALLOY_PLAN_TARGET_IDS`,
+  `ALLOY_PLAN_TARGET_KIND`, `ALLOY_PLAN_TARGET_ROOT`) and the normalized
+  root-level `ALLOY_PLAN_EXTRA_CONFIG` map from the serialized plan.
+- Updated Smelterl plan coverage and docs with sourceable `build_plan.env`
+  examples plus Common Test checks that the generated file preserves auxiliary
+  order, keeps normalized `extra_config` values literal, and can be sourced by
+  bash successfully.
 - Updated `smelterl plan` to complete Task 3.11 end to end: it now loads real
   Smelterl build provenance, carries target-local motherlode/config/defconfig
   data plus normalized `extra_config` into a serialized build plan, builds the

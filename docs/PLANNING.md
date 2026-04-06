@@ -199,7 +199,7 @@ Status convention:
     repository records during serialization.
   - Done when: Plan can be consumed by generate without recomputation.
 
-- [ ] **Task 3.12: `build_plan.env` export writer**
+- [x] **Task 3.12: `build_plan.env` export writer**
   - Scope: Bash-friendly target list and loop metadata export.
   - Tests: Golden test for env file content.
   - Refinement note (from Task 3.11): Derive loop ordering from serialized
