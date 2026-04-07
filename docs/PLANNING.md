@@ -211,7 +211,7 @@ Status convention:
 ## Phase 2: Smelterl Generate Pipeline (original Alloy Phase 4)
 
 
-- [ ] **Task 4.1: `smelterl_cmd_generate` skeleton and option validation**
+- [x] **Task 4.1: `smelterl_cmd_generate` skeleton and option validation**
   - Scope: Selected-target generation, main-only option enforcement.
   - Tests: Command-option matrix tests (`--auxiliary` vs main-only options).
   - Done when: Invalid combos fail early and predictably.
@@ -219,6 +219,10 @@ Status convention:
 - [ ] **Task 4.2: `smelterl_gen_external_desc` render/write**
   - Scope: Generate `external.desc` from selected target plan data.
   - Tests: Golden output test.
+  - Refinement note (from Task 4.1): Reuse `smelterl_cmd_generate`'s
+    plan-loading and selected-target validation path so render tasks keep one
+    command-layer source of truth for main-vs-auxiliary option gating and plan
+    selection errors.
   - Done when: Output is deterministic and valid.
 
 - [ ] **Task 4.3: `smelterl_gen_config_in` render/write**

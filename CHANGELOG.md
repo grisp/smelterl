@@ -8,6 +8,10 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added `smelterl_cmd_generate` as the initial `smelterl generate` command
+  handler, including plan loading, selected-target resolution, strict
+  main-target-only option validation, and dedicated Common Test coverage for
+  the command-option matrix.
 - Added `smelterl_plan`, `smelterl_file`, and `smelterl_vcs` to serialize
   versioned `build_plan.term` files, read them back for later generate-stage
   consumption, emit UTF-8 Erlang term files consistently, and attach
@@ -62,6 +66,10 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated the shared Smelterl CLI parser so command-argument errors are
+  reported with the actual command name, allowing `generate` and later
+  commands to reuse one parsing path without inheriting `plan`-specific
+  diagnostics.
 - Updated `smelterl plan` to write the optional `build_plan.env` summary when
   `--output-plan-env` is provided, exposing deterministic bash loop metadata
   (`ALLOY_PLAN_AUXILIARY_IDS`, `ALLOY_PLAN_TARGET_IDS`,

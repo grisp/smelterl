@@ -6,6 +6,7 @@
         smelterl_cli,
         smelterl_command,
         smelterl_capabilities,
+        smelterl_cmd_generate,
         smelterl_cmd_plan,
         smelterl_config,
         smelterl_file,
@@ -24,6 +25,9 @@
     {applications, [kernel, stdlib]},
     {env, [
         {version, "0.1.0"},
-        {command_handlers, [{plan, smelterl_cmd_plan}]}
+        {command_handlers, [
+            {generate, smelterl_cmd_generate},
+            {plan, smelterl_cmd_plan}
+        ]}
     ]}
 ]}.

@@ -76,7 +76,7 @@ dispatch(Command, Rest, Config) ->
         Module ->
             Action = resolve_action(Command, Module),
             Spec = Module:options_spec(Action),
-            case parse_command_args(Rest, Spec, #{}) of
+            case parse_command_args(Command, Rest, Spec, #{}) of
                 {error, Message} ->
                     print_error(Message),
                     2;
@@ -121,22 +121,22 @@ first_pass([Token | _], _State)
 first_pass([Token | Rest], State) ->
     {ok, State#{command := list_to_atom(Token), rest := Rest}}.
 
-parse_command_args([], _Spec, Opts) ->
+parse_command_args(_Command, [], _Spec, Opts) ->
     {ok, Opts};
-parse_command_args(["--" | Rest], _Spec, _Opts) ->
+parse_command_args(Command, ["--" | Rest], _Spec, _Opts) ->
     {error,
         io_lib:format(
-            "Unexpected positional arguments: ~ts",
-            [string:join(Rest, " ")]
+            "~ts: unexpected positional arguments: ~ts",
+            [command_name(Command), string:join(Rest, " ")]
         )};
-parse_command_args([Token | Rest], Spec, Opts) ->
+parse_command_args(Command, [Token | Rest], Spec, Opts) ->
     case Token of
         "--help" ->
-            parse_command_args(Rest, Spec, Opts#{help => true});
+            parse_command_args(Command, Rest, Spec, Opts#{help => true});
         "-h" ->
-            parse_command_args(Rest, Spec, Opts#{help => true});
+            parse_command_args(Command, Rest, Spec, Opts#{help => true});
         _ when is_list(Token), Token =/= [], hd(Token) =:= $- ->
-            case split_long_option(Token) of
+            case split_long_option(Command, Token) of
                 {error, Message} ->
                     {error, Message};
                 {ok, Name, Attached} ->
@@ -144,11 +144,12 @@ parse_command_args([Token | Rest], Spec, Opts) ->
                         undefined ->
                             {error,
                                 io_lib:format(
-                                    "plan: unknown argument '~ts'",
-                                    [Token]
+                                    "~ts: unknown argument '~ts'",
+                                    [command_name(Command), Token]
                                 )};
                         OptionSpec ->
                             parse_option(
+                                Command,
                                 Rest,
                                 Spec,
                                 Opts,
@@ -161,58 +162,87 @@ parse_command_args([Token | Rest], Spec, Opts) ->
         _ ->
             {error,
                 io_lib:format(
-                    "plan: unexpected positional argument '~ts'",
-                    [Token]
+                    "~ts: unexpected positional argument '~ts'",
+                    [command_name(Command), Token]
                 )}
     end.
 
-parse_option(Rest, Spec, Opts, #{name := Name, type := flag}, Token, Attached) ->
+parse_option(
+    Command,
+    Rest,
+    Spec,
+    Opts,
+    #{name := Name, type := flag},
+    Token,
+    Attached
+) ->
     case Attached of
         undefined ->
-            parse_command_args(Rest, Spec, Opts#{Name => true});
+            parse_command_args(Command, Rest, Spec, Opts#{Name => true});
         _ ->
             {error,
                 io_lib:format(
-                    "plan: option '~ts' does not take a value",
-                    [Token]
+                    "~ts: option '~ts' does not take a value",
+                    [command_name(Command), Token]
                 )}
     end;
-parse_option(Rest, Spec, Opts, #{name := Name, type := value}, _Token, Attached) ->
+parse_option(
+    Command,
+    Rest,
+    Spec,
+    Opts,
+    #{name := Name, type := value},
+    _Token,
+    Attached
+) ->
     case Attached of
         undefined ->
             case Rest of
                 [Value | Tail] ->
-                    parse_command_args(Tail, Spec, Opts#{Name => Value});
+                    parse_command_args(Command, Tail, Spec, Opts#{Name => Value});
                 [] ->
                     {error,
                         io_lib:format(
-                            "plan: option '--~ts' requires a value",
-                            [atom_to_list(Name)]
+                            "~ts: option '--~ts' requires a value",
+                            [command_name(Command), atom_to_list(Name)]
                         )}
             end;
         Value ->
-            parse_command_args(Rest, Spec, Opts#{Name => Value})
+            parse_command_args(Command, Rest, Spec, Opts#{Name => Value})
     end;
-parse_option(Rest, Spec, Opts, #{name := Name, type := accum}, _Token, Attached) ->
+parse_option(
+    Command,
+    Rest,
+    Spec,
+    Opts,
+    #{name := Name, type := accum},
+    _Token,
+    Attached
+) ->
     case Attached of
         undefined ->
             case Rest of
                 [Value | Tail] ->
                     Values = maps:get(Name, Opts, []),
-                    parse_command_args(Tail, Spec, Opts#{Name => Values ++ [Value]});
+                    parse_command_args(
+                        Command,
+                        Tail,
+                        Spec,
+                        Opts#{Name => Values ++ [Value]}
+                    );
                 [] ->
                     {error,
                         io_lib:format(
-                            "plan: option '--~ts' requires a value",
-                            [atom_to_list(Name)]
+                            "~ts: option '--~ts' requires a value",
+                            [command_name(Command), atom_to_list(Name)]
                         )}
             end;
         Value ->
             Values = maps:get(Name, Opts, []),
-            parse_command_args(Rest, Spec, Opts#{Name => Values ++ [Value]})
+            parse_command_args(Command, Rest, Spec, Opts#{Name => Values ++ [Value]})
     end.
 
-split_long_option([$-, $- | Rest]) ->
+split_long_option(_Command, [$-, $- | Rest]) ->
     case string:split(Rest, "=", all) of
         [Name] ->
             {ok, Name, undefined};
@@ -221,8 +251,8 @@ split_long_option([$-, $- | Rest]) ->
         [Name | Tail] ->
             {ok, Name, string:join(Tail, "=")}
     end;
-split_long_option(Token) ->
-    {error, io_lib:format("plan: unknown argument '~ts'", [Token])}.
+split_long_option(Command, Token) ->
+    {error, io_lib:format("~ts: unknown argument '~ts'", [command_name(Command), Token])}.
 
 option_by_long(Name, Spec) ->
     lists:foldl(
@@ -240,6 +270,9 @@ option_by_long(Name, Spec) ->
         undefined,
         Spec
     ).
+
+command_name(Command) ->
+    atom_to_list(Command).
 
 global_help(Config) ->
     Commands = maps:keys(maps:get(command_handlers, Config)),
