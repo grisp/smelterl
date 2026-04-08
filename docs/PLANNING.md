@@ -216,7 +216,7 @@ Status convention:
   - Tests: Command-option matrix tests (`--auxiliary` vs main-only options).
   - Done when: Invalid combos fail early and predictably.
 
-- [ ] **Task 4.2: `smelterl_gen_external_desc` render/write**
+- [x] **Task 4.2: `smelterl_gen_external_desc` render/write**
   - Scope: Generate `external.desc` from selected target plan data.
   - Tests: Golden output test.
   - Refinement note (from Task 4.1): Reuse `smelterl_cmd_generate`'s
@@ -231,6 +231,9 @@ Status convention:
   - Refinement note (from Task 3.8): Use the normalized plan-carried
     extra-config key set produced by `smelterl plan`, with injected
     `ALLOY_MOTHERLODE` first and no user-provided override path.
+  - Refinement note (from Task 4.2): Reuse `smelterl_template` and
+    `priv/templates/` for Config.in rendering so template lookup, placeholder
+    expansion, and file writes stay out of `smelterl_cmd_generate`.
   - Done when: Output matches design and Buildroot expectations.
 
 - [ ] **Task 4.4: `smelterl_gen_external_mk` render/write**

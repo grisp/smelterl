@@ -8,6 +8,11 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added `smelterl_template`, `smelterl_gen_external_desc`, and the
+  `priv/templates/external.desc.mustache` template so generate-stage text
+  renderers can load template files from application priv, render deterministic
+  `external.desc` output, and cover the new path with dedicated Common Test
+  coverage.
 - Added `smelterl_cmd_generate` as the initial `smelterl generate` command
   handler, including plan loading, selected-target resolution, strict
   main-target-only option validation, and dedicated Common Test coverage for
@@ -66,6 +71,13 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl generate` to write `external.desc` when
+  `--output-external-desc` is requested, reusing the existing plan-loading and
+  selected-target validation path for both main and auxiliary generation
+  passes.
+- Extended `smelterl_file` with reusable UTF-8 iodata writing so template-based
+  renderers can stream generated text to files or already-open IO devices
+  without duplicating file-open/write logic.
 - Updated the shared Smelterl CLI parser so command-argument errors are
   reported with the actual command name, allowing `generate` and later
   commands to reuse one parsing path without inheriting `plan`-specific

@@ -15,6 +15,7 @@ and a small set of reusable path helpers for later plan/generate stages.
 -export([format_term/1]).
 -export([relativize/2]).
 -export([resolve_path/2]).
+-export([write_iodata/2]).
 -export([write_term/2]).
 
 
@@ -36,12 +37,22 @@ Write one Erlang term to a filesystem path or already-open IO device.
 -spec write_term(smelterl:file_path() | file:io_device(), term()) ->
     ok | {error, term()}.
 write_term(PathOrDevice, Term) when is_binary(PathOrDevice); is_list(PathOrDevice) ->
+    write_iodata(PathOrDevice, format_term(Term));
+write_term(Device, Term) ->
+    write_iodata(Device, format_term(Term)).
+
+-doc """
+Write UTF-8 iodata to a filesystem path or already-open IO device.
+""".
+-spec write_iodata(smelterl:file_path() | file:io_device(), iodata()) ->
+    ok | {error, term()}.
+write_iodata(PathOrDevice, Content) when is_binary(PathOrDevice); is_list(PathOrDevice) ->
     Path = to_list(PathOrDevice),
-    Content = unicode:characters_to_binary(format_term(Term)),
+    Binary = unicode:characters_to_binary(Content),
     case file:open(Path, [write, binary]) of
         {ok, Device} ->
             Result =
-                case file:write(Device, Content) of
+                case file:write(Device, Binary) of
                     ok ->
                         ok;
                     {error, Reason} ->
@@ -52,8 +63,8 @@ write_term(PathOrDevice, Term) when is_binary(PathOrDevice); is_list(PathOrDevic
         {error, Posix} ->
             {error, {open_failed, to_binary(Path), Posix}}
     end;
-write_term(Device, Term) ->
-    case catch io:put_chars(Device, format_term(Term)) of
+write_iodata(Device, Content) ->
+    case catch io:put_chars(Device, Content) of
         ok ->
             ok;
         {'EXIT', Reason} ->

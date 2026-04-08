@@ -88,7 +88,8 @@ run_generate(Opts) ->
     TargetId = selected_target_id(Opts),
     maybe
         {ok, Plan} ?= load_plan(PlanPath),
-        ok ?= select_target(TargetId, Plan),
+        {ok, Target} ?= select_target(TargetId, Plan),
+        ok ?= maybe_write_external_desc(Opts, Plan, Target),
         0
     else
         {plan_error, Reason} ->
@@ -96,6 +97,9 @@ run_generate(Opts) ->
             1;
         {target_error, Reason} ->
             smelterl_log:error("~ts~n", [format_target_error(Reason)]),
+            1;
+        {generate_error, Reason} ->
+            smelterl_log:error("~ts~n", [format_generate_error(Reason)]),
             1
     end.
 
@@ -224,12 +228,48 @@ load_plan(Path) ->
 
 select_target(TargetId, Plan) ->
     case smelterl_plan:select_target(TargetId, Plan) of
-        {ok, _Target} ->
-            ok;
+        {ok, Target} ->
+            {ok, Target};
         {error, {unknown_target, main}} ->
             {target_error, missing_main_target};
         {error, {unknown_target, AuxiliaryId}} ->
             {target_error, {unknown_auxiliary_target, AuxiliaryId}}
+    end.
+
+maybe_write_external_desc(Opts, Plan, Target) ->
+    case maps:get(output_external_desc, Opts, undefined) of
+        undefined ->
+            ok;
+        [] ->
+            ok;
+        Path ->
+            write_external_desc(Path, maps:get(product, Plan), Target)
+    end.
+
+write_external_desc(Path, ProductId, Target) ->
+    Motherlode = maps:get(motherlode, Target, #{}),
+    case with_output_device(Path, fun(Device) ->
+        smelterl_gen_external_desc:generate(ProductId, Motherlode, Device)
+    end) of
+        ok ->
+            ok;
+        {error, {open_failed, OutputPath, Posix}} ->
+            {generate_error, {external_desc_open_failed, OutputPath, Posix}};
+        {error, Reason} ->
+            {generate_error, {external_desc_failed, Reason}}
+    end.
+
+with_output_device("-", Fun) ->
+    Fun(standard_io);
+with_output_device(Path, Fun) ->
+    PathString = path_to_list(Path),
+    case file:open(PathString, [write, binary]) of
+        {ok, Device} ->
+            Result = Fun(Device),
+            _ = file:close(Device),
+            Result;
+        {error, Posix} ->
+            {error, {open_failed, path_to_binary(PathString), Posix}}
     end.
 
 format_plan_error(Path, {read_failed, _ResolvedPath, Posix}) ->
@@ -262,3 +302,39 @@ format_target_error({unknown_auxiliary_target, AuxiliaryId}) ->
         "generate: unknown auxiliary target '~ts'.",
         [atom_to_binary(AuxiliaryId, utf8)]
     ).
+
+format_generate_error({external_desc_open_failed, Path, Posix}) ->
+    io_lib:format(
+        "generate: failed to open external.desc output '~ts': ~ts",
+        [Path, file:format_error(Posix)]
+    );
+format_generate_error({external_desc_failed, {missing_product_metadata, ProductId}}) ->
+    io_lib:format(
+        "generate: build plan motherlode is missing product metadata for '~ts'.",
+        [atom_to_binary(ProductId, utf8)]
+    );
+format_generate_error({external_desc_failed, {render_failed, external_desc, Detail}}) ->
+    io_lib:format(
+        "generate: failed to render external.desc: ~tp",
+        [Detail]
+    );
+format_generate_error({external_desc_failed, {write_failed, _PathOrDevice, Detail}}) ->
+    io_lib:format(
+        "generate: failed to write external.desc: ~tp",
+        [Detail]
+    );
+format_generate_error({external_desc_failed, Reason}) ->
+    io_lib:format(
+        "generate: external.desc generation failed: ~tp",
+        [Reason]
+    ).
+
+path_to_list(Path) when is_binary(Path) ->
+    unicode:characters_to_list(Path);
+path_to_list(Path) ->
+    Path.
+
+path_to_binary(Path) when is_binary(Path) ->
+    Path;
+path_to_binary(Path) ->
+    unicode:characters_to_binary(Path).

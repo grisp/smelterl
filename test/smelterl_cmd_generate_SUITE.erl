@@ -108,9 +108,12 @@ generate_accepts_valid_main_and_auxiliary_target_selection(_Config) ->
     PlanPath = write_sample_plan_file(),
     OutputDir = make_temp_dir("smelterl-generate-output"),
     MainManifest = filename:join(OutputDir, "ALLOY_SDK_MANIFEST"),
+    MainExternalDesc = filename:join(OutputDir, "main.external.desc"),
+    AuxiliaryExternalDesc = filename:join(OutputDir, "aux.external.desc"),
     {StatusMain, OutputMain} = run_main([
         "generate",
         "--plan", PlanPath,
+        "--output-external-desc", MainExternalDesc,
         "--output-manifest", MainManifest,
         "--buildroot-legal", filename:join(OutputDir, "legal-main"),
         "--export-legal", "legal-info",
@@ -118,14 +121,17 @@ generate_accepts_valid_main_and_auxiliary_target_selection(_Config) ->
     ]),
     assert_equal(0, StatusMain),
     assert_equal(<<>>, OutputMain),
+    assert_file_content(MainExternalDesc, expected_external_desc()),
     {StatusAux, OutputAux} = run_main([
         "generate",
         "--plan", PlanPath,
         "--auxiliary", "aux_alpha",
+        "--output-external-desc", AuxiliaryExternalDesc,
         "--output-context", filename:join(OutputDir, "alloy_context.sh")
     ]),
     assert_equal(0, StatusAux),
-    assert_equal(<<>>, OutputAux).
+    assert_equal(<<>>, OutputAux),
+    assert_file_content(AuxiliaryExternalDesc, expected_external_desc()).
 
 generate_reports_unknown_auxiliary_target(_Config) ->
     PlanPath = write_sample_plan_file(),
@@ -188,7 +194,7 @@ sample_plan() ->
         kind => main,
         tree => #{root => demo, edges => #{demo => []}},
         topology => [demo],
-        motherlode => #{nuggets => #{}, repositories => #{}},
+        motherlode => sample_motherlode(),
         config => #{},
         defconfig => #{regular => [], cumulative => []},
         capabilities => sample_capabilities([aux_alpha])
@@ -200,7 +206,7 @@ sample_plan() ->
         constraints => [],
         tree => #{root => aux_alpha_root, edges => #{aux_alpha_root => []}},
         topology => [aux_alpha_root],
-        motherlode => #{nuggets => #{}, repositories => #{}},
+        motherlode => sample_motherlode(),
         config => #{},
         defconfig => #{regular => [], cumulative => []},
         capabilities => sample_capabilities([aux_alpha])
@@ -239,6 +245,25 @@ sample_capabilities(AuxiliaryIds) ->
             maps:from_list([{TargetId, []} || TargetId <- [main | AuxiliaryIds]])
     }.
 
+sample_motherlode() ->
+    #{
+        nuggets => #{
+            demo => #{
+                id => demo,
+                description => <<"Demo product BSP">>,
+                version => <<"1.2.3">>
+            },
+            aux_alpha_root => #{
+                id => aux_alpha_root
+            }
+        },
+        repositories => #{}
+    }.
+
+expected_external_desc() ->
+    <<"name: DEMO\n"
+      "desc: Demo product BSP - Version 1.2.3\n">>.
+
 make_temp_dir(Prefix) ->
     make_temp_dir(Prefix, 0).
 
@@ -263,6 +288,16 @@ assert_contains(Haystack, Needle) ->
             ct:fail("Expected ~tp to contain ~tp", [Haystack, Needle]);
         _ ->
             ok
+    end.
+
+assert_file_content(Path, Expected) ->
+    case file:read_file(Path) of
+        {ok, Expected} ->
+            ok;
+        {ok, Actual} ->
+            ct:fail("Expected ~ts to contain ~tp, got ~tp", [Path, Expected, Actual]);
+        {error, Reason} ->
+            ct:fail("Failed to read ~ts: ~tp", [Path, Reason])
     end.
 
 assert_equal(Expected, Actual) ->
