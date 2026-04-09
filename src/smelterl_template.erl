@@ -121,6 +121,10 @@ template_filename(external_desc) ->
     "external.desc.mustache";
 template_filename(<<"external_desc">>) ->
     "external.desc.mustache";
+template_filename(config_in) ->
+    "Config.in.mustache";
+template_filename(<<"config_in">>) ->
+    "Config.in.mustache";
 template_filename(_TemplateKey) ->
     undefined.
 

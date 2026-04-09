@@ -225,7 +225,7 @@ Status convention:
     selection errors.
   - Done when: Output is deterministic and valid.
 
-- [ ] **Task 4.3: `smelterl_gen_config_in` render/write**
+- [x] **Task 4.3: `smelterl_gen_config_in` render/write**
   - Scope: Generate `Config.in` from selected target + plan-carried extra-config.
   - Tests: Golden output test including `ALLOY_MOTHERLODE` behavior.
   - Refinement note (from Task 3.8): Use the normalized plan-carried
@@ -239,6 +239,10 @@ Status convention:
 - [ ] **Task 4.4: `smelterl_gen_external_mk` render/write**
   - Scope: Generate `external.mk`.
   - Tests: Golden output test.
+  - Refinement note (from Task 4.3): Reuse the same package-tree discovery
+    rules as `smelterl_gen_config_in`: accept a root-level packages-path
+    aggregator file when present and keep per-package directory traversal
+    deterministic (alphabetical within each nugget).
   - Done when: Include order and content are deterministic.
 
 - [ ] **Task 4.5: `smelterl_gen_defconfig` generate-stage render**

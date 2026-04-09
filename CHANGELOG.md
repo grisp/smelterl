@@ -8,6 +8,11 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added `smelterl_gen_config_in` and
+  `priv/templates/Config.in.mustache` so generate-stage rendering can emit
+  deterministic Buildroot `Config.in` files with plan-carried extra-config
+  declarations and nugget package source entries, backed by dedicated Common
+  Test coverage.
 - Added `smelterl_template`, `smelterl_gen_external_desc`, and the
   `priv/templates/external.desc.mustache` template so generate-stage text
   renderers can load template files from application priv, render deterministic
@@ -71,6 +76,13 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl generate` to write `Config.in` when
+  `--output-config-in` is requested, reusing the existing plan-loading and
+  selected-target validation path while sourcing plan-carried extra-config
+  keys with `ALLOY_MOTHERLODE` first and deterministic per-nugget package
+  discovery.
+- Extended `smelterl_template` with `Config.in` template lookup so later
+  generate-stage renderers can continue sharing one template-resolution path.
 - Updated `smelterl generate` to write `external.desc` when
   `--output-external-desc` is requested, reusing the existing plan-loading and
   selected-target validation path for both main and auxiliary generation

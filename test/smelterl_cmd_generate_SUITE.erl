@@ -12,7 +12,8 @@
     generate_requires_output_manifest_for_export_legal/1,
     generate_requires_export_legal_for_include_sources/1,
     generate_accepts_valid_main_and_auxiliary_target_selection/1,
-    generate_reports_unknown_auxiliary_target/1
+    generate_reports_unknown_auxiliary_target/1,
+    generate_writes_config_in_from_plan_extra_config/1
 ]).
 
 all() ->
@@ -25,7 +26,8 @@ all() ->
         generate_requires_output_manifest_for_export_legal,
         generate_requires_export_legal_for_include_sources,
         generate_accepts_valid_main_and_auxiliary_target_selection,
-        generate_reports_unknown_auxiliary_target
+        generate_reports_unknown_auxiliary_target,
+        generate_writes_config_in_from_plan_extra_config
     ].
 
 global_help_lists_generate_command(_Config) ->
@@ -146,6 +148,19 @@ generate_reports_unknown_auxiliary_target(_Config) ->
         <<"generate: unknown auxiliary target 'missing_aux'.">>
     ).
 
+generate_writes_config_in_from_plan_extra_config(_Config) ->
+    {PlanPath, ExpectedConfigIn} = write_sample_plan_with_packages_file(),
+    OutputDir = make_temp_dir("smelterl-generate-config-in-output"),
+    ConfigInPath = filename:join(OutputDir, "Config.in"),
+    {Status, Output} = run_main([
+        "generate",
+        "--plan", PlanPath,
+        "--output-config-in", ConfigInPath
+    ]),
+    assert_equal(0, Status),
+    assert_equal(<<>>, Output),
+    assert_file_content(ConfigInPath, ExpectedConfigIn).
+
 run_main(Argv) ->
     ScriptDir = filename:dirname(code:which(?MODULE)),
     SmelterlEbin = filename:join(filename:dirname(ScriptDir), "ebin"),
@@ -235,6 +250,61 @@ sample_plan() ->
     ),
     Plan.
 
+write_sample_plan_with_packages_file() ->
+    {Topology, Motherlode, ExpectedConfigIn} = sample_target_with_packages(),
+    OutputDir = make_temp_dir("smelterl-generate-plan-with-packages"),
+    PlanPath = filename:join(OutputDir, "build_plan.term"),
+    MainTarget = #{
+        id => main,
+        kind => main,
+        tree => #{root => demo, edges => #{demo => []}},
+        topology => Topology,
+        motherlode => Motherlode,
+        config => #{},
+        defconfig => #{regular => [], cumulative => []},
+        capabilities => sample_capabilities([aux_alpha])
+    },
+    AuxiliaryTarget = #{
+        id => aux_alpha,
+        kind => auxiliary,
+        aux_root => aux_alpha_root,
+        constraints => [],
+        tree => #{root => aux_alpha_root, edges => #{aux_alpha_root => []}},
+        topology => Topology,
+        motherlode => Motherlode,
+        config => #{},
+        defconfig => #{regular => [], cumulative => []},
+        capabilities => sample_capabilities([aux_alpha])
+    },
+    {ok, Plan} = smelterl_plan:new(
+        demo,
+        #{
+            <<"ALLOY_CACHE_DIR">> => <<"${ALLOY_CACHE_DIR}">>,
+            <<"ALLOY_BUILD_DIR">> => <<"${ALLOY_BUILD_DIR}">>,
+            <<"ALLOY_MOTHERLODE">> => <<"${ALLOY_MOTHERLODE}">>
+        },
+        #{
+            main => MainTarget,
+            aux_alpha => AuxiliaryTarget
+        },
+        [aux_alpha],
+        #{
+            product => demo,
+            target_arch => <<"arm-buildroot-linux-gnueabihf">>,
+            product_fields => #{},
+            repositories => [],
+            nugget_repo_map => #{demo => undefined},
+            nuggets => [],
+            auxiliary_products => [],
+            capabilities => #{},
+            sdk_outputs => [],
+            external_components => [],
+            smelterl_repository => smelterl
+        }
+    ),
+    ok = smelterl_plan:write_file(PlanPath, Plan),
+    {PlanPath, ExpectedConfigIn}.
+
 sample_capabilities(AuxiliaryIds) ->
     #{
         firmware_variants => [plain],
@@ -259,6 +329,83 @@ sample_motherlode() ->
         },
         repositories => #{}
     }.
+
+sample_target_with_packages() ->
+    RootDir = make_temp_dir("smelterl-generate-packages"),
+    RepoDir = filename:join(RootDir, "builtin"),
+    ok = file:make_dir(RepoDir),
+    ok = ensure_dir(filename:join(RepoDir, "platform_core/buildroot")),
+    ok = ensure_file(
+        filename:join(RepoDir, "platform_core/buildroot/Config.in"),
+        "# platform root\n"
+    ),
+    ok = ensure_dir(filename:join(RepoDir, "platform_core/buildroot/pkg_alpha")),
+    ok = ensure_file(
+        filename:join(RepoDir, "platform_core/buildroot/pkg_alpha/Config.in"),
+        "# alpha\n"
+    ),
+    ok = ensure_dir(filename:join(RepoDir, "product_core/packages/app_pkg")),
+    ok = ensure_file(
+        filename:join(RepoDir, "product_core/packages/app_pkg/Config.in"),
+        "# app\n"
+    ),
+    Topology = [platform_core, product_core],
+    Motherlode = #{
+        nuggets => #{
+            demo => #{
+                id => demo,
+                description => <<"Demo product BSP">>,
+                version => <<"1.2.3">>
+            },
+            platform_core => #{
+                id => platform_core,
+                description => <<"Platform BSP">>,
+                repository => builtin,
+                repo_path => path_binary(RepoDir),
+                nugget_relpath => <<"platform_core">>,
+                buildroot => [{packages, <<"buildroot">>}]
+            },
+            product_core => #{
+                id => product_core,
+                description => <<"Product BSP">>,
+                repository => builtin,
+                repo_path => path_binary(RepoDir),
+                nugget_relpath => <<"product_core">>,
+                buildroot => [{packages, <<"packages">>}]
+            },
+            aux_alpha_root => #{
+                id => aux_alpha_root
+            }
+        },
+        repositories => #{}
+    },
+    ExpectedConfigIn =
+        <<"# Generated by smelterl - do not edit\n"
+          "\n"
+          "## Extra Buildroot Environment ##\n"
+          "\n"
+          "config ALLOY_MOTHERLODE\n"
+          "\tstring\n"
+          "\toption env=\"ALLOY_MOTHERLODE\"\n"
+          "\n"
+          "config ALLOY_BUILD_DIR\n"
+          "\tstring\n"
+          "\toption env=\"ALLOY_BUILD_DIR\"\n"
+          "\n"
+          "config ALLOY_CACHE_DIR\n"
+          "\tstring\n"
+          "\toption env=\"ALLOY_CACHE_DIR\"\n"
+          "\n"
+          "## Nugget Packages ##\n"
+          "\n"
+          "# platform_core: Platform BSP\n"
+          "source \"$(ALLOY_MOTHERLODE)/builtin/platform_core/buildroot/Config.in\"\n"
+          "source \"$(ALLOY_MOTHERLODE)/builtin/platform_core/buildroot/pkg_alpha/Config.in\"\n"
+          "\n"
+          "# product_core: Product BSP\n"
+          "source \"$(ALLOY_MOTHERLODE)/builtin/product_core/packages/app_pkg/Config.in\"\n"
+          "\n">>,
+    {Topology, Motherlode, ExpectedConfigIn}.
 
 expected_external_desc() ->
     <<"name: DEMO\n"
@@ -299,6 +446,17 @@ assert_file_content(Path, Expected) ->
         {error, Reason} ->
             ct:fail("Failed to read ~ts: ~tp", [Path, Reason])
     end.
+
+ensure_dir(Path) ->
+    ok = filelib:ensure_dir(filename:join(Path, "dummy")),
+    ok.
+
+ensure_file(Path, Content) ->
+    ok = filelib:ensure_dir(Path),
+    ok = file:write_file(Path, Content).
+
+path_binary(Path) ->
+    list_to_binary(filename:absname(Path)).
 
 assert_equal(Expected, Actual) ->
     case Actual of
