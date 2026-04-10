@@ -8,6 +8,11 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added a self-contained `scripts/generate_defconfig_keys.escript` and
+  dedicated Common Test coverage so `priv/defconfig-keys.spec` can be
+  regenerated from a Buildroot source tree with conservative cumulative-key
+  heuristics, explicit include/override controls, and traceable non-leaking
+  header comments.
 - Added `smelterl_gen_external_mk` and
   `priv/templates/external.mk.mustache` so generate-stage rendering can emit
   deterministic Buildroot `external.mk` files from target-local package trees,
@@ -83,6 +88,14 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Replaced the hand-written first-draft `priv/defconfig-keys.spec` contents
+  with a generated Buildroot 2025.05 index that records the Buildroot
+  version/revision and regeneration command while avoiding host-specific
+  absolute paths in the committed file.
+- Updated the Smelterl defconfig design documentation to treat
+  `priv/defconfig-keys.spec` as a generated committed artefact, define the
+  conservative detection and explicit include/override workflow, and document
+  the new helper escript under `scripts/`.
 - Updated `smelterl generate` to write `external.mk` when
   `--output-external-mk` is requested, reusing the existing plan-loading and
   selected-target validation path while preserving deterministic package-tree

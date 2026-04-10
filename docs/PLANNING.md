@@ -278,7 +278,31 @@ Status convention:
     `smelterl:defconfig_model()` directly; cumulative entries already carry
     resolved paths, injected wrapper hooks, and final quoted value strings, so
     the render stage must not re-split or re-resolve them.
+  - Refinement note (from Task 4.5a): Treat `priv/defconfig-keys.spec` as a
+    committed generated input maintained by the self-contained helper escript;
+    generate-stage defconfig rendering must consume the precomputed model only
+    and must not reintroduce ad-hoc cumulative-key inference.
   - Done when: Generate stage does render only (no resolution).
+
+- [x] **Task 4.5a: Buildroot-driven `defconfig-keys.spec` generator**
+  - Scope: Add an Smelterl escript that scans a Buildroot source tree and
+    generates `priv/defconfig-keys.spec` using conservative heuristics for
+    cumulative key detection and path-vs-plain classification.
+  - Scope: Support explicit include and override options so known keys can be
+    forced into the generated spec or have their kind corrected when heuristics
+    are insufficient.
+  - Scope: Make the generated file self-describing with traceability comments
+    that record the Buildroot version/revision, generator command (without
+    leaking host-specific absolute paths), and any explicit include/override
+    options used for regeneration.
+  - Scope: Commit the first generated version of `priv/defconfig-keys.spec`
+    using the new generator and update the Smelterl design document to define
+    this workflow.
+  - Tests: Focused generator tests covering conservative detection, explicit
+    includes/overrides, and generated header content.
+  - Done when: Smelterl can regenerate `priv/defconfig-keys.spec` from a
+    Buildroot tree reproducibly, the initial generated spec is committed, and
+    the design/doc workflow reflects the new source of truth.
 
 - [ ] **Task 4.6: `smelterl_gen_context` selected-target context**
   - Scope: Generate target context with strict main-vs-aux boundaries.

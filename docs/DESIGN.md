@@ -643,11 +643,11 @@ Certain export keys have conventional meaning across the system. `smelterl` read
 
 ### 4.11 Generating defconfig
 
-**Purpose:** Build a deterministic merged defconfig model from all nuggets (plan-time) and render it for one selected target (generate-time). The set of **cumulative Buildroot keys** is defined in a list under **priv** (e.g. `priv/defconfig-keys.spec` as an Erlang term file). That list is generated (e.g. from Buildroot documentation or inspection) and stored in the tool as configuration. Each entry specifies the key name and whether values are **paths**: path values are converted from relative (to the nugget) to `"${ALLOY_MOTHERLODE}/<nugget_relative_path>/<specified_value>"`, where `<nugget_relative_path>` is the path from the motherlode root to the nugget directory (e.g. `repo/nugget_dir`); absolute values are kept as-is.
+**Purpose:** Build a deterministic merged defconfig model from all nuggets (plan-time) and render it for one selected target (generate-time). The set of **cumulative Buildroot keys** is defined in a list under **priv** (e.g. `priv/defconfig-keys.spec` as an Erlang term file). That list is generated from a Buildroot source tree by a Smelterl helper escript using conservative heuristics plus explicit include/override options, then committed as tool configuration. Each entry specifies the key name and whether values are **paths**: path values are converted from relative (to the nugget) to `"${ALLOY_MOTHERLODE}/<nugget_relative_path>/<specified_value>"`, where `<nugget_relative_path>` is the path from the motherlode root to the nugget directory (e.g. `repo/nugget_dir`); absolute values are kept as-is.
 
 **Inputs:**
 
-- **Defconfig key spec:** list of cumulative Buildroot keys (key name + whether values are paths).
+- **Defconfig key spec:** list of cumulative Buildroot keys (key name + whether values are paths). The committed file is generated, not hand-maintained: the generator must scan one Buildroot source tree, detect only high-confidence cumulative keys automatically, and allow explicit `--include` / `--override` options for known keys that the conservative heuristics would otherwise omit or classify differently.
 - **Overridden topology order** from [§4.5 Applying Overrides](#45-applying-overrides).
 - **Overridden motherlode** from [§4.5 Applying Overrides](#45-applying-overrides) (nugget dir, metadata for defconfig_fragment and flavor).
 - **Consolidated config** (global and per-nugget) from [§4.7 Consolidating Nugget Configuration](#47-consolidating-nugget-configuration) for `[[ALLOY_CONFIG_*]]` substitution.
@@ -658,18 +658,23 @@ Certain export keys have conventional meaning across the system. `smelterl` read
 
 **Process:**
 
-1. **Plan-time merge:** For each nugget in topology order:
+1. **Defconfig key spec generation (maintenance workflow):**
+   - Run the helper escript against one Buildroot source tree to regenerate `priv/defconfig-keys.spec`.
+   - The generator must be **conservative**: it may omit ambiguous string options rather than guessing cumulative semantics.
+   - The generator must support explicit include and override options so maintainers can force specific keys into the spec or override `path` vs `plain` classification when Buildroot metadata is insufficient.
+   - The generated file must include traceability comments with at least the Buildroot version, Buildroot revision/commit when available, the generator command needed to reproduce the file, and the explicit include/override options used. Those comments must not leak host-specific absolute paths; use a sanitized Buildroot directory label in the regeneration command instead.
+2. **Plan-time merge:** For each nugget in topology order:
    - Resolve defconfig fragment path: if metadata has `defconfig_fragment` as a path, use it; if `{flavor_map, [...]}`, select path by nugget’s resolved flavor. Load fragment content.
    - Substitute all `[[KEY]]` markers in the fragment (keys and values) with: consolidated config (ALLOY_CONFIG_*), plan-carried extra-config (ALLOY_*), product metadata (ALLOY_PRODUCT*, etc.). The replacement is **literal**: whatever string was passed as the value for KEY during `plan` (e.g. via `--extra-config 'ALLOY_CACHE_DIR=${ALLOY_CACHE_DIR}'`) is written into the defconfig unchanged. So passing a value like `${ALLOY_CACHE_DIR}` (using single quotes when invoking smelterl so the shell does not expand it) causes the generated defconfig to contain that variable reference, which is then expanded from the environment when the defconfig is used at runtime. Single-pass, non-recursive; unresolved marker are errors.
    - Parse the fragment using buildroot defconfig format.
    - Classify each line: **regular** key (last-wins) or **cumulative** key (from the key spec). For cumulative keys, collect values; for regular, keep last value.
-2. **Plan-time cumulative keys:** Accumulate values from all nuggets, then one line per key using the key spec (key name + whether values are paths). For each value that is a **path** (per that list): if relative, resolve to `"${ALLOY_MOTHERLODE}/<nugget_relative_path>/<specified_value>"`; if absolute, keep. For non-path cumulative values, use as-is. Concatenate all resolved values with space.
-3. **Plan-time regular keys:** Keep one line per key; last value wins. Optionally keep source nugget info for comments and diagnostics.
-4. **Target wrapper hook entries:** Append target-local wrapper scripts to cumulative hook keys:
+3. **Plan-time cumulative keys:** Accumulate values from all nuggets, then one line per key using the key spec (key name + whether values are paths). For each value that is a **path** (per that list): if relative, resolve to `"${ALLOY_MOTHERLODE}/<nugget_relative_path>/<specified_value>"`; if absolute, keep. For non-path cumulative values, use as-is. Concatenate all resolved values with space.
+4. **Plan-time regular keys:** Keep one line per key; last value wins. Optionally keep source nugget info for comments and diagnostics.
+5. **Target wrapper hook entries:** Append target-local wrapper scripts to cumulative hook keys:
    - `BR2_ROOTFS_POST_BUILD_SCRIPT += $(BR2_EXTERNAL)/board/<TARGET_ID>/scripts/post-build.sh`
    - `BR2_ROOTFS_POST_IMAGE_SCRIPT += $(BR2_EXTERNAL)/board/<TARGET_ID>/scripts/post-image.sh`
    - `BR2_ROOTFS_POST_FAKEROOT_SCRIPT += $(BR2_EXTERNAL)/board/<TARGET_ID>/scripts/post-fakeroot.sh`
-5. **Generate-time render:** Use the **defconfig template** for layout so header comments and section structure are template-defined. Read the selected target’s precomputed defconfig model from the plan, render the template, and write to the **open output** provided by the caller.
+6. **Generate-time render:** Use the **defconfig template** for layout so header comments and section structure are template-defined. Read the selected target’s precomputed defconfig model from the plan, render the template, and write to the **open output** provided by the caller.
 
 **Output:**
 
@@ -928,9 +933,10 @@ smelterl/
 │   ├── smelterl_vcs.erl          # VCS utility functions (commit, describe, dirty)
 │   └── smelterl_log.erl          # Logging / stderr
 ├── scripts/
-│   └── generate_build_info.escript   # Build-time script: writes priv/build_info.term (see below)
+│   ├── generate_build_info.escript   # Build-time script: writes priv/build_info.term (see below)
+│   └── generate_defconfig_keys.escript # Helper script: regenerates priv/defconfig-keys.spec from Buildroot metadata
 └── priv/
-    ├── defconfig-keys.spec             # List of cumulative key in defconfig fragments, with value type expectation
+    ├── defconfig-keys.spec             # Generated list of cumulative defconfig keys and value kinds
     ├── build_info.term                 # VCS info of smelterl source; generated by scripts/generate_build_info.escript
     └── templates/
         ├── external.desc.mustache      # Buildroot external tree descriptor
@@ -943,9 +949,11 @@ smelterl/
 
 **build-info.term** is generated at build time and contains smelterl source repository VCS state into. The build must run **scripts/generate_build_info.escript** during the escript packaging so that `priv/build_info.term` exists and is included in the escript. 
 
+**defconfig-keys.spec** is a generated, committed helper input for defconfig merging. It is regenerated on demand from a Buildroot checkout by **scripts/generate_defconfig_keys.escript** using conservative detection plus explicit include/override options, and its header records the Buildroot version/revision and regeneration command without embedding host-specific absolute paths.
+
 **scripts/** is the standard place for build and helper scripts. Scripts here are not part of the compiled application but are run during the build or by developers.
 
-The script’s requirements are specified in [§5.7.1 Build-time script: generate_build_info](#571-build-time-script-generate_build_info).
+The scripts’ requirements are specified in [§5.7.1 Build-time and helper scripts](#571-build-time-and-helper-scripts).
 
 **Build output:** Escript built as `_build/default/bin/smelterl`
 
@@ -1340,7 +1348,7 @@ Each module’s role, inputs, and outputs are specified so that implementation c
 
 **Scope and maintenance:** The following subsections are **not exhaustive**. Implementation may require additional exported functions; the listed functions are the **most representative** ones for each module’s role. Adding new exported functions during implementation **does not** require documenting each of them here; this design doc need only be updated when **changing** a function already documented here or when adding a **crucial** export that belongs in the design. The **reference for function documentation** is the **inline documentation in the modules** (e.g. `-doc` attributes); this section is a design overview, not the source of truth for every export.
 
-#### 5.7.1 Build-time script: generate_build_info
+#### 5.7.1 Build-time and helper scripts
 
 **scripts/generate_build_info.escript** is not an Erlang module but a build-time escript. It must:
 
@@ -1350,6 +1358,15 @@ Each module’s role, inputs, and outputs are specified so that implementation c
 - **Relpath:** Compute the path of the smelterl application directory relative to the repository root (e.g. `smelterl/` or `apps/smelterl/`); use empty binary if smelterl is at the repo root. Store as `relpath` in the build-info.
 - **Write** an Erlang term file to `priv/build_info.term` (path relative to the smelterl app root). Term format per [§5.6.8 Smelterl build-info](#568-smelterl-build-info), serialization per [Erlang Term File Format Conventions](00_OVERVIEW.md#erlang-term-file-format-conventions) (UTF-8, one term, period-terminated).
 - **Failure:** If the directory is not a VCS checkout (e.g. tarball with no `.git`), the script fails.
+
+**scripts/generate_defconfig_keys.escript** is a self-contained developer/helper
+escript. It must:
+
+- Accept one Buildroot source directory as input plus optional include/override options for known cumulative keys that conservative auto-detection would omit or classify differently.
+- Scan Buildroot Kconfig sources to discover candidate `BR2_*` string options, classify only high-confidence cumulative keys automatically, and determine `path` vs `plain` kind conservatively.
+- Prefer omission over guessing when Buildroot metadata is ambiguous.
+- Write `priv/defconfig-keys.spec` as one Erlang term file that remains readable by `file:consult/1`.
+- Emit header comments describing the Buildroot version, Buildroot revision/commit when available, the explicit include/override options used, and a regeneration command that is useful for maintainers but does not embed host-specific absolute filesystem paths.
 
 #### 5.7.2 smelterl (entry point)
 
