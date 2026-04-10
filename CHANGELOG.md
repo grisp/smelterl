@@ -8,6 +8,13 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added `smelterl_gen_external_mk` and
+  `priv/templates/external.mk.mustache` so generate-stage rendering can emit
+  deterministic Buildroot `external.mk` files from target-local package trees,
+  backed by dedicated Common Test coverage.
+- Added `smelterl_template_SUITE` coverage for nested sections, current-value
+  lookups, and template parse/render error handling in the shared Smelterl
+  template renderer.
 - Added `smelterl_gen_config_in` and
   `priv/templates/Config.in.mustache` so generate-stage rendering can emit
   deterministic Buildroot `Config.in` files with plan-carried extra-config
@@ -76,6 +83,15 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl generate` to write `external.mk` when
+  `--output-external-mk` is requested, reusing the existing plan-loading and
+  selected-target validation path while preserving deterministic package-tree
+  traversal and the same motherlode-relative include convention used by
+  `Config.in`.
+- Extended `smelterl_template` with `external.mk` template lookup plus a
+  section-capable Mustache-style renderer (`{{name}}`, `{{{name}}}`,
+  `{{#section}}...{{/section}}`, standalone section lines) so generate-stage
+  renderers can pass structured data instead of preformatted text blocks.
 - Updated `smelterl generate` to write `Config.in` when
   `--output-config-in` is requested, reusing the existing plan-loading and
   selected-target validation path while sourcing plan-carried extra-config

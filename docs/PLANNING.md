@@ -236,7 +236,7 @@ Status convention:
     expansion, and file writes stay out of `smelterl_cmd_generate`.
   - Done when: Output matches design and Buildroot expectations.
 
-- [ ] **Task 4.4: `smelterl_gen_external_mk` render/write**
+- [x] **Task 4.4: `smelterl_gen_external_mk` render/write**
   - Scope: Generate `external.mk`.
   - Tests: Golden output test.
   - Refinement note (from Task 4.3): Reuse the same package-tree discovery
@@ -244,6 +244,32 @@ Status convention:
     aggregator file when present and keep per-package directory traversal
     deterministic (alphabetical within each nugget).
   - Done when: Include order and content are deterministic.
+
+- [ ] **Task 4.4a: `smelterl_gen_config_in` template-owned formatting refactor**
+  - Scope: Replace the current pre-rendered `extra_config_blocks` and
+    `source_blocks` strings with structured template data so `Config.in`
+    comments, blank lines, `config`, and `source` line layout live in the
+    Mustache template instead of Erlang.
+  - Tests: Update `smelterl_gen_config_in` Common Tests to assert the same
+    output through section-driven template rendering.
+  - Refinement note (from Task 4.4): Reuse the section-capable
+    `smelterl_template` path introduced for `external.mk`; Erlang should keep
+    deterministic ordering and path resolution, but not assemble formatted
+    text blocks.
+  - Done when: `smelterl_gen_config_in` passes structured data only and the
+    template fully defines output formatting.
+
+- [ ] **Task 4.4b: `smelterl_gen_external_desc` template-owned formatting refactor**
+  - Scope: Replace the current preformatted description/version concatenation
+    in Erlang with structured template data so `external.desc` layout and
+    optional version text are defined in the Mustache template.
+  - Tests: Update `smelterl_gen_external_desc` Common Tests to cover the
+    template-driven version/description cases.
+  - Refinement note (from Task 4.4): Keep product-name normalization in Erlang,
+    but move the final text-shape decisions into the template using the shared
+    section-capable renderer.
+  - Done when: `smelterl_gen_external_desc` provides structured fields only and
+    the template defines the emitted text format.
 
 - [ ] **Task 4.5: `smelterl_gen_defconfig` generate-stage render**
   - Scope: Render selected target defconfig from plan model.

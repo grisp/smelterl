@@ -91,6 +91,7 @@ run_generate(Opts) ->
         {ok, Target} ?= select_target(TargetId, Plan),
         ok ?= maybe_write_external_desc(Opts, Plan, Target),
         ok ?= maybe_write_config_in(Opts, Plan, Target),
+        ok ?= maybe_write_external_mk(Opts, Target),
         0
     else
         {plan_error, Reason} ->
@@ -257,6 +258,16 @@ maybe_write_config_in(Opts, Plan, Target) ->
             write_config_in(Path, Plan, Target)
     end.
 
+maybe_write_external_mk(Opts, Target) ->
+    case maps:get(output_external_mk, Opts, undefined) of
+        undefined ->
+            ok;
+        [] ->
+            ok;
+        Path ->
+            write_external_mk(Path, Target)
+    end.
+
 write_external_desc(Path, ProductId, Target) ->
     Motherlode = maps:get(motherlode, Target, #{}),
     case with_output_device(Path, fun(Device) ->
@@ -288,6 +299,20 @@ write_config_in(Path, Plan, Target) ->
             {generate_error, {config_in_open_failed, OutputPath, Posix}};
         {error, Reason} ->
             {generate_error, {config_in_failed, Reason}}
+    end.
+
+write_external_mk(Path, Target) ->
+    Topology = maps:get(topology, Target, []),
+    Motherlode = maps:get(motherlode, Target, #{}),
+    case with_output_device(Path, fun(Device) ->
+        smelterl_gen_external_mk:generate(Topology, Motherlode, Device)
+    end) of
+        ok ->
+            ok;
+        {error, {open_failed, OutputPath, Posix}} ->
+            {generate_error, {external_mk_open_failed, OutputPath, Posix}};
+        {error, Reason} ->
+            {generate_error, {external_mk_failed, Reason}}
     end.
 
 with_output_device("-", Fun) ->
@@ -387,6 +412,36 @@ format_generate_error({config_in_failed, {write_failed, _PathOrDevice, Detail}})
 format_generate_error({config_in_failed, Reason}) ->
     io_lib:format(
         "generate: Config.in generation failed: ~tp",
+        [Reason]
+    );
+format_generate_error({external_mk_open_failed, Path, Posix}) ->
+    io_lib:format(
+        "generate: failed to open external.mk output '~ts': ~ts",
+        [Path, file:format_error(Posix)]
+    );
+format_generate_error({external_mk_failed, {missing_nugget_metadata, NuggetId}}) ->
+    io_lib:format(
+        "generate: build plan target is missing nugget metadata for '~ts'.",
+        [atom_to_binary(NuggetId, utf8)]
+    );
+format_generate_error({external_mk_failed, {missing_packages_dir, NuggetId, Path}}) ->
+    io_lib:format(
+        "generate: nugget '~ts' packages directory is missing: ~ts",
+        [atom_to_binary(NuggetId, utf8), Path]
+    );
+format_generate_error({external_mk_failed, {render_failed, external_mk, Detail}}) ->
+    io_lib:format(
+        "generate: failed to render external.mk: ~tp",
+        [Detail]
+    );
+format_generate_error({external_mk_failed, {write_failed, _PathOrDevice, Detail}}) ->
+    io_lib:format(
+        "generate: failed to write external.mk: ~tp",
+        [Detail]
+    );
+format_generate_error({external_mk_failed, Reason}) ->
+    io_lib:format(
+        "generate: external.mk generation failed: ~tp",
         [Reason]
     ).
 

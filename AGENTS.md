@@ -35,6 +35,13 @@ Rules:
 - keep Smelterl-specific implementation, tests, planning, and history here,
 - keep Alloy orchestration, shared workflow, and Alloy-owned design docs in the
   `grisp_alloy` repository,
+- for Smelterl text generators that use `priv/templates/*.mustache`, keep
+  formatting decisions in the template whenever practical:
+  - Erlang should provide structured, deterministic data models,
+  - the template should own comments, blank lines, headings, and output line
+    layout,
+  - avoid passing pre-rendered text blocks into templates unless the required
+    formatting cannot be expressed cleanly by the shared template renderer,
 - when a task depends on Alloy-owned design documents, follow the local/external
   links provided by the redirect stubs under `docs/`.
 - do not treat a cross-repository request as one unowned task; use linked
