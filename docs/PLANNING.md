@@ -259,7 +259,7 @@ Status convention:
   - Done when: `smelterl_gen_config_in` passes structured data only and the
     template fully defines output formatting.
 
-- [ ] **Task 4.4b: `smelterl_gen_external_desc` template-owned formatting refactor**
+- [x] **Task 4.4b: `smelterl_gen_external_desc` template-owned formatting refactor**
   - Scope: Replace the current preformatted description/version concatenation
     in Erlang with structured template data so `external.desc` layout and
     optional version text are defined in the Mustache template.

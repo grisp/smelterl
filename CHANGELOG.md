@@ -88,6 +88,12 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl_gen_external_desc` and
+  `priv/templates/external.desc.mustache` so `external.desc` formatting is now
+  template-owned: Erlang still normalizes the Buildroot external name, but the
+  template now decides whether description text, version text, and the
+  `" - Version ..."` separator appear, with focused Common Test coverage for
+  description-only, version-only, and empty-metadata cases.
 - Updated `smelterl_gen_config_in` and `priv/templates/Config.in.mustache`
   so `Config.in` formatting is now template-owned: the generator passes
   structured extra-config and package/source data into the shared Mustache

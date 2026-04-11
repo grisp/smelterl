@@ -27,11 +27,16 @@ Build `external.desc` content for one product and motherlode view.
 generate(ProductId, Motherlode) ->
     maybe
         {ok, ProductNugget} ?= lookup_product_nugget(ProductId, Motherlode),
+        Description = description_text(ProductNugget),
+        Version = version_text(ProductNugget),
         smelterl_template:render(
             external_desc,
             #{
                 name => uppercase_product_name(ProductId),
-                desc => description_text(ProductNugget)
+                description => Description,
+                has_description => has_text(Description),
+                version => Version,
+                has_version => has_text(Version)
             }
         )
     else
@@ -71,18 +76,12 @@ uppercase_product_name(ProductId) ->
     ).
 
 description_text(ProductNugget) ->
-    Description = maps:get(description, ProductNugget, <<>>),
-    Version = maps:get(version, ProductNugget, undefined),
-    maybe_append_version(Description, Version).
+    maps:get(description, ProductNugget, <<>>).
 
-maybe_append_version(Description, Version)
-  when is_binary(Description), Description =/= <<>>, is_binary(Version), Version =/= <<>> ->
-    <<Description/binary, " - Version ", Version/binary>>;
-maybe_append_version(Description, _Version)
-  when is_binary(Description), Description =/= <<>> ->
-    Description;
-maybe_append_version(_Description, Version)
-  when is_binary(Version), Version =/= <<>> ->
-    <<"Version ", Version/binary>>;
-maybe_append_version(_Description, _Version) ->
-    <<>>.
+version_text(ProductNugget) ->
+    maps:get(version, ProductNugget, <<>>).
+
+has_text(Value) when is_binary(Value), Value =/= <<>> ->
+    true;
+has_text(_Value) ->
+    false.
