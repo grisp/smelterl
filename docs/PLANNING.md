@@ -309,7 +309,7 @@ Backlog/process note:
     Buildroot tree reproducibly, the initial generated spec is committed, and
     the design/doc workflow reflects the new source of truth.
 
-- [ ] **Task 4.6: `smelterl_gen_context` selected-target context**
+- [x] **Task 4.6: `smelterl_gen_context` selected-target context**
   - Scope: Generate target context with strict main-vs-aux boundaries.
   - Tests: Golden tests for one main and one auxiliary context.
   - Refinement note (from Task 3.7): Reuse the plan-carried capability data
@@ -344,4 +344,13 @@ Backlog/process note:
 - [ ] **Task 4.10: Plan/generate integration regression tests**
   - Scope: End-to-end smelterl tests for one main + one auxiliary sample.
   - Tests: Integration tests asserting no dependency resolution in generate.
+  - Refinement note (from Task 4.6): Static `alloy_context.sh` generation can
+    emit declared `sdk_outputs` metadata and helper lookups, but the
+    main-context `ALLOY_SDK_OUTPUT_<AUX_ID>_<OUTPUT_ID>` path variables remain
+    Alloy-orchestrator injections after auxiliary builds and should be covered
+    by later integration tests rather than Smelterl-only unit tests.
+  - Refinement note (from Task 4.6): Main-context firmware output metadata
+    still needs the selected target motherlode for non-selectable
+    `firmware_outputs`; the current capability payload only carries selectable
+    outputs plus firmware variants/parameters and target-local `sdk_outputs`.
   - Done when: Pipeline determinism and option gating are verified.

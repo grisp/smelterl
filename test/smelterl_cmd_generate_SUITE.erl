@@ -15,7 +15,9 @@
     generate_reports_unknown_auxiliary_target/1,
     generate_writes_config_in_from_plan_extra_config/1,
     generate_writes_external_mk_from_plan/1,
-    generate_writes_defconfig_from_plan_model/1
+    generate_writes_defconfig_from_plan_model/1,
+    generate_writes_context_from_plan/1,
+    generated_context_passes_bash_validation/1
 ]).
 
 all() ->
@@ -31,7 +33,9 @@ all() ->
         generate_reports_unknown_auxiliary_target,
         generate_writes_config_in_from_plan_extra_config,
         generate_writes_external_mk_from_plan,
-        generate_writes_defconfig_from_plan_model
+        generate_writes_defconfig_from_plan_model,
+        generate_writes_context_from_plan,
+        generated_context_passes_bash_validation
     ].
 
 global_help_lists_generate_command(_Config) ->
@@ -132,8 +136,7 @@ generate_accepts_valid_main_and_auxiliary_target_selection(_Config) ->
         "generate",
         "--plan", PlanPath,
         "--auxiliary", "aux_alpha",
-        "--output-external-desc", AuxiliaryExternalDesc,
-        "--output-context", filename:join(OutputDir, "alloy_context.sh")
+        "--output-external-desc", AuxiliaryExternalDesc
     ]),
     assert_equal(0, StatusAux),
     assert_equal(<<>>, OutputAux),
@@ -191,6 +194,34 @@ generate_writes_defconfig_from_plan_model(_Config) ->
     assert_equal(<<>>, Output),
     assert_file_content(DefconfigPath, ExpectedDefconfig).
 
+generate_writes_context_from_plan(_Config) ->
+    {PlanPath, ExpectedLines} = write_sample_plan_with_context_file(),
+    OutputDir = make_temp_dir("smelterl-generate-context-output"),
+    ContextPath = filename:join(OutputDir, "alloy_context.sh"),
+    {Status, Output} = run_main([
+        "generate",
+        "--plan", PlanPath,
+        "--output-context", ContextPath
+    ]),
+    assert_equal(0, Status),
+    assert_equal(<<>>, Output),
+    assert_file_contains(ContextPath, ExpectedLines).
+
+generated_context_passes_bash_validation(_Config) ->
+    {PlanPath, _ExpectedLines} = write_sample_plan_with_context_file(),
+    OutputDir = make_temp_dir("smelterl-generate-context-bash-output"),
+    ContextPath = filename:join(OutputDir, "alloy_context.sh"),
+    {Status, Output} = run_main([
+        "generate",
+        "--plan", PlanPath,
+        "--output-context", ContextPath
+    ]),
+    assert_equal(0, Status),
+    assert_equal(<<>>, Output),
+    assert_bash_syntax(ContextPath),
+    assert_context_sources_in_bash(ContextPath),
+    assert_shellcheck_clean(ContextPath).
+
 run_main(Argv) ->
     ScriptDir = filename:dirname(code:which(?MODULE)),
     SmelterlEbin = filename:join(filename:dirname(ScriptDir), "ebin"),
@@ -237,8 +268,17 @@ sample_plan() ->
     MainTarget = #{
         id => main,
         kind => main,
-        tree => #{root => demo, edges => #{demo => []}},
-        topology => [demo],
+        tree => #{
+            root => demo,
+            edges => #{
+                builder_core => [],
+                toolchain_core => [],
+                platform_core => [],
+                system_core => [platform_core],
+                demo => [builder_core, toolchain_core, platform_core, system_core]
+            }
+        },
+        topology => [builder_core, toolchain_core, platform_core, system_core, demo],
         motherlode => sample_motherlode(),
         config => #{},
         defconfig => #{regular => [], cumulative => []},
@@ -249,8 +289,19 @@ sample_plan() ->
         kind => auxiliary,
         aux_root => aux_alpha_root,
         constraints => [],
-        tree => #{root => aux_alpha_root, edges => #{aux_alpha_root => []}},
-        topology => [aux_alpha_root],
+        tree => #{
+            root => aux_alpha_root,
+            edges => #{
+                builder_core => [],
+                toolchain_core => [],
+                platform_core => [],
+                system_core => [platform_core],
+                aux_alpha_root =>
+                    [builder_core, toolchain_core, platform_core, system_core]
+            }
+        },
+        topology =>
+            [builder_core, toolchain_core, platform_core, system_core, aux_alpha_root],
         motherlode => sample_motherlode(),
         config => #{},
         defconfig => #{regular => [], cumulative => []},
@@ -411,6 +462,120 @@ write_sample_plan_with_defconfig_file() ->
           "BR2_ROOTFS_POST_BUILD_SCRIPT=\"$(BR2_EXTERNAL)/board/main/scripts/post-build.sh\"\n">>,
     {PlanPath, ExpectedDefconfig}.
 
+write_sample_plan_with_context_file() ->
+    OutputDir = make_temp_dir("smelterl-generate-plan-with-context"),
+    PlanPath = filename:join(OutputDir, "build_plan.term"),
+    MainTarget = #{
+        id => main,
+        kind => main,
+        tree => #{
+            root => demo,
+            edges => #{
+                builder_core => [],
+                toolchain_core => [],
+                platform_core => [],
+                system_core => [platform_core],
+                demo => [builder_core, toolchain_core, platform_core, system_core]
+            }
+        },
+        topology => [builder_core, toolchain_core, platform_core, system_core, demo],
+        motherlode => #{
+            nuggets => #{
+                builder_core => #{
+                    id => builder_core,
+                    category => builder,
+                    repository => builtin,
+                    nugget_relpath => <<"builder_core">>,
+                    name => <<"Builder Core">>,
+                    version => <<"1.0.0">>
+                },
+                toolchain_core => #{
+                    id => toolchain_core,
+                    category => toolchain,
+                    repository => builtin,
+                    nugget_relpath => <<"toolchain_core">>,
+                    name => <<"Toolchain Core">>,
+                    version => <<"1.0.0">>
+                },
+                demo => #{
+                    id => demo,
+                    category => feature,
+                    repository => builtin,
+                    nugget_relpath => <<"demo">>,
+                    name => <<"Demo Product">>,
+                    description => <<"Demo product BSP">>,
+                    version => <<"1.2.3">>,
+                    sdk_outputs => [
+                        {symbols, [{display_name, <<"Symbols">>}]}
+                    ]
+                },
+                platform_core => #{
+                    id => platform_core,
+                    category => platform,
+                    repository => builtin,
+                    nugget_relpath => <<"platform_core">>,
+                    name => <<"Platform Core">>,
+                    version => <<"1.0.0">>,
+                    hooks => [{pre_build, <<"scripts/pre-build.sh">>}],
+                    embed => [{images, <<"rootfs.img">>}]
+                },
+                system_core => #{
+                    id => system_core,
+                    category => system,
+                    repository => builtin,
+                    nugget_relpath => <<"system_core">>,
+                    name => <<"System Core">>,
+                    version => <<"1.0.0">>
+                }
+            },
+            repositories => #{}
+        },
+        config => #{
+            <<"ALLOY_CONFIG_DEVICE_NAME">> => {global, undefined, <<"demo-box">>}
+        },
+        defconfig => #{regular => [], cumulative => []},
+        capabilities => #{
+            firmware_variants => [plain],
+            variant_nuggets => #{plain => []},
+            selectable_outputs => [],
+            firmware_parameters => [],
+            sdk_outputs_by_target => #{
+                main => [#{id => symbols, nugget => demo, name => <<"Symbols">>}]
+            }
+        }
+    },
+    {ok, Plan} = smelterl_plan:new(
+        demo,
+        #{},
+        #{main => MainTarget},
+        [],
+        #{
+            product => demo,
+            target_arch => <<"arm-buildroot-linux-gnueabihf">>,
+            product_fields => #{},
+            repositories => [],
+            nugget_repo_map => #{demo => undefined},
+            nuggets => [],
+            auxiliary_products => [],
+            capabilities => #{},
+            sdk_outputs => [],
+            external_components => [],
+            smelterl_repository => smelterl
+        }
+    ),
+    ok = smelterl_plan:write_file(PlanPath, Plan),
+    ExpectedLines = [
+        <<"# Generated by smelterl - do not edit">>,
+        <<"# Product: demo 1.2.3">>,
+        <<"export ALLOY_PRODUCT=\"demo\"">>,
+        <<"export ALLOY_FIRMWARE_VARIANTS=(\"plain\")">>,
+        <<"ALLOY_PRE_BUILD_HOOKS=(\"platform_core:scripts/pre-build.sh\")">>,
+        <<"ALLOY_EMBED_IMAGES=(\"rootfs.img\")">>,
+        <<"export ALLOY_SDK_OUTPUTS=(\"symbols\")">>,
+        <<"alloy_sdk_output_from_aux()">>
+    ],
+    {PlanPath, ExpectedLines}.
+
 sample_capabilities(AuxiliaryIds) ->
     #{
         firmware_variants => [plain],
@@ -424,13 +589,35 @@ sample_capabilities(AuxiliaryIds) ->
 sample_motherlode() ->
     #{
         nuggets => #{
+            builder_core => #{
+                id => builder_core,
+                category => builder
+            },
+            toolchain_core => #{
+                id => toolchain_core,
+                category => toolchain
+            },
+            platform_core => #{
+                id => platform_core,
+                category => platform
+            },
+            system_core => #{
+                id => system_core,
+                category => system
+            },
             demo => #{
                 id => demo,
+                category => feature,
                 description => <<"Demo product BSP">>,
-                version => <<"1.2.3">>
+                version => <<"1.2.3">>,
+                name => <<"Demo Product">>
             },
             aux_alpha_root => #{
-                id => aux_alpha_root
+                id => aux_alpha_root,
+                category => feature,
+                name => <<"Aux Alpha">>,
+                description => <<"Auxiliary alpha target">>,
+                version => <<"0.1.0">>
             }
         },
         repositories => #{}
@@ -576,6 +763,78 @@ assert_file_content(Path, Expected) ->
         {error, Reason} ->
             ct:fail("Failed to read ~ts: ~tp", [Path, Reason])
     end.
+
+assert_file_contains(Path, Needles) ->
+    case file:read_file(Path) of
+        {ok, Content} ->
+            lists:foreach(fun(Needle) -> assert_contains(Content, Needle) end, Needles);
+        {error, Reason} ->
+            ct:fail("Failed to read ~ts: ~tp", [Path, Reason])
+    end.
+
+assert_bash_syntax(Path) ->
+    {Status, Output} = run_process("bash", ["-n", Path]),
+    case Status of
+        0 ->
+            ok;
+        _ ->
+            ct:fail("bash -n failed for ~ts: ~ts", [Path, Output])
+    end.
+
+assert_context_sources_in_bash(Path) ->
+    Script =
+        "set -euo pipefail\n"
+        "export ALLOY_MOTHERLODE=/tmp/alloy-motherlode\n"
+        "source \"$1\"\n"
+        "[ \"$ALLOY_PRODUCT\" = demo ]\n"
+        "declare -p ALLOY_NUGGET_ORDER >/dev/null\n"
+        "[ \"$(alloy_config device_name)\" = demo-box ]\n",
+    {Status, Output} = run_process("bash", ["-c", Script, "bash", Path]),
+    case Status of
+        0 ->
+            ok;
+        _ ->
+            ct:fail("sourcing generated context failed for ~ts: ~ts", [Path, Output])
+    end.
+
+assert_shellcheck_clean(Path) ->
+    case os:find_executable("shellcheck") of
+        false ->
+            ct:comment("shellcheck not available; skipping generated-context lint check"),
+            ok;
+        Shellcheck ->
+            {Status, Output} = run_process(
+                Shellcheck,
+                ["-s", "bash", "-e", "SC2034", Path]
+            ),
+            case Status of
+                0 ->
+                    ok;
+                _ ->
+                    ct:fail("shellcheck failed for ~ts: ~ts", [Path, Output])
+            end
+    end.
+
+run_process(Executable, Args) ->
+    ExecutablePath =
+        case os:find_executable(Executable) of
+            false ->
+                ct:fail("Executable not found on PATH: ~ts", [Executable]);
+            Path ->
+                Path
+        end,
+    Port =
+        open_port(
+            {spawn_executable, ExecutablePath},
+            [
+                binary,
+                exit_status,
+                stderr_to_stdout,
+                use_stdio,
+                {args, Args}
+            ]
+        ),
+    collect_port_output(Port, []).
 
 ensure_dir(Path) ->
     ok = filelib:ensure_dir(filename:join(Path, "dummy")),

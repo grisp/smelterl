@@ -93,6 +93,7 @@ run_generate(Opts) ->
         ok ?= maybe_write_config_in(Opts, Plan, Target),
         ok ?= maybe_write_external_mk(Opts, Target),
         ok ?= maybe_write_defconfig(Opts, Target),
+        ok ?= maybe_write_context(Opts, Plan, Target),
         0
     else
         {plan_error, Reason} ->
@@ -279,6 +280,16 @@ maybe_write_defconfig(Opts, Target) ->
             write_defconfig(Path, Target)
     end.
 
+maybe_write_context(Opts, Plan, Target) ->
+    case maps:get(output_context, Opts, undefined) of
+        undefined ->
+            ok;
+        [] ->
+            ok;
+        Path ->
+            write_context(Path, Plan, Target)
+    end.
+
 write_external_desc(Path, ProductId, Target) ->
     Motherlode = maps:get(motherlode, Target, #{}),
     case with_output_device(Path, fun(Device) ->
@@ -337,6 +348,19 @@ write_defconfig(Path, Target) ->
             {generate_error, {defconfig_open_failed, OutputPath, Posix}};
         {error, Reason} ->
             {generate_error, {defconfig_failed, Reason}}
+    end.
+
+write_context(Path, Plan, Target) ->
+    ProductId = maps:get(product, Plan),
+    case with_output_device(Path, fun(Device) ->
+        smelterl_gen_context:render(ProductId, Target, Device)
+    end) of
+        ok ->
+            ok;
+        {error, {open_failed, OutputPath, Posix}} ->
+            {generate_error, {context_open_failed, OutputPath, Posix}};
+        {error, Reason} ->
+            {generate_error, {context_failed, Reason}}
     end.
 
 with_output_device("-", Fun) ->
@@ -486,6 +510,31 @@ format_generate_error({defconfig_failed, {write_failed, _PathOrDevice, Detail}})
 format_generate_error({defconfig_failed, Reason}) ->
     io_lib:format(
         "generate: defconfig generation failed: ~tp",
+        [Reason]
+    );
+format_generate_error({context_open_failed, Path, Posix}) ->
+    io_lib:format(
+        "generate: failed to open alloy_context.sh output '~ts': ~ts",
+        [Path, file:format_error(Posix)]
+    );
+format_generate_error({context_failed, {missing_nugget_metadata, NuggetId}}) ->
+    io_lib:format(
+        "generate: build plan target is missing nugget metadata for '~ts'.",
+        [atom_to_binary(NuggetId, utf8)]
+    );
+format_generate_error({context_failed, {render_failed, alloy_context, Detail}}) ->
+    io_lib:format(
+        "generate: failed to render alloy_context.sh: ~tp",
+        [Detail]
+    );
+format_generate_error({context_failed, {write_failed, _PathOrDevice, Detail}}) ->
+    io_lib:format(
+        "generate: failed to write alloy_context.sh: ~tp",
+        [Detail]
+    );
+format_generate_error({context_failed, Reason}) ->
+    io_lib:format(
+        "generate: alloy_context.sh generation failed: ~tp",
         [Reason]
     ).
 

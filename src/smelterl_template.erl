@@ -135,6 +135,10 @@ template_filename(defconfig) ->
     "defconfig.mustache";
 template_filename(<<"defconfig">>) ->
     "defconfig.mustache";
+template_filename(alloy_context) ->
+    "alloy_context.sh.mustache";
+template_filename(<<"alloy_context">>) ->
+    "alloy_context.sh.mustache";
 template_filename(_TemplateKey) ->
     undefined.
 

@@ -8,6 +8,11 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added `smelterl_gen_context`,
+  `priv/templates/alloy_context.sh.mustache`, and focused Common Test coverage
+  so generate-stage rendering can emit target-scoped `alloy_context.sh` files
+  from serialized plan data with strict main-versus-auxiliary section
+  boundaries.
 - Added a self-contained `scripts/generate_defconfig_keys.escript` and
   dedicated Common Test coverage so `priv/defconfig-keys.spec` can be
   regenerated from a Buildroot source tree with conservative cumulative-key
@@ -88,6 +93,18 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Tightened the shared workflow guidance so task history files omit routine
+  successful validation-command lists unless a validation result adds durable
+  task-specific insight beyond the expected workflow.
+- Extended `smelterl_cmd_generate_SUITE` so generated `alloy_context.sh`
+  output is validated with `bash -n`, sourced in bash under a controlled
+  environment, and lint-checked with `shellcheck -s bash` (excluding the
+  expected declarative `SC2034` warnings for sourced context arrays).
+- Updated `smelterl generate` to write `alloy_context.sh` when
+  `--output-context` is requested, reusing the existing plan-loading and
+  selected-target validation path while rendering target/product metadata,
+  consolidated config, target-scoped hook arrays, main-only firmware/embed/fs
+  sections, and target-local `sdk_outputs` metadata from the serialized plan.
 - Updated `smelterl_gen_defconfig`, `smelterl_cmd_generate`, and the shared
   template registry so `smelterl generate --output-defconfig` now renders the
   precomputed plan-stage defconfig model through a dedicated

@@ -15,6 +15,8 @@ When working from a `grisp_alloy` superproject checkout:
 - write history in `smelterl/history/`, following the shared rule that
   history files record only durable, future-useful task context and not normal
   process confirmations or local session-state reminders,
+  including routine successful validation-command lists when those commands
+  were only the expected workflow and produced no task-specific insight,
 - codify durable workflow/process improvements in the owning repository docs
   rather than leaving them only in conversational feedback,
 - update `smelterl/CHANGELOG.md`,
