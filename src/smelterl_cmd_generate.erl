@@ -94,6 +94,7 @@ run_generate(Opts) ->
         ok ?= maybe_write_external_mk(Opts, Target),
         ok ?= maybe_write_defconfig(Opts, Target),
         ok ?= maybe_write_context(Opts, Plan, Target),
+        ok ?= maybe_export_legal(Opts),
         0
     else
         {plan_error, Reason} ->
@@ -290,6 +291,16 @@ maybe_write_context(Opts, Plan, Target) ->
             write_context(Path, Plan, Target)
     end.
 
+maybe_export_legal(Opts) ->
+    case maps:get(export_legal, Opts, undefined) of
+        undefined ->
+            ok;
+        [] ->
+            ok;
+        ExportLegalPath ->
+            export_legal(Opts, ExportLegalPath)
+    end.
+
 write_external_desc(Path, ProductId, Target) ->
     Motherlode = maps:get(motherlode, Target, #{}),
     case with_output_device(Path, fun(Device) ->
@@ -361,6 +372,22 @@ write_context(Path, Plan, Target) ->
             {generate_error, {context_open_failed, OutputPath, Posix}};
         {error, Reason} ->
             {generate_error, {context_failed, Reason}}
+    end.
+
+export_legal(Opts, ExportLegalPath) ->
+    ManifestPath = maps:get(output_manifest, Opts),
+    ExportRoot = filename:dirname(path_to_list(ManifestPath)),
+    ExportDir = smelterl_file:resolve_path(ExportLegalPath, ExportRoot),
+    BuildrootPaths = [
+        path_to_binary(Path)
+     || Path <- maps:get(buildroot_legal, Opts, [])
+    ],
+    IncludeSources = maps:get(include_sources, Opts, false),
+    case smelterl_legal:export_legal(BuildrootPaths, ExportDir, IncludeSources) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            {generate_error, {legal_export_failed, Reason}}
     end.
 
 with_output_device("-", Fun) ->
@@ -531,6 +558,16 @@ format_generate_error({context_failed, {write_failed, _PathOrDevice, Detail}}) -
     io_lib:format(
         "generate: failed to write alloy_context.sh: ~tp",
         [Detail]
+    );
+format_generate_error({legal_export_failed, {export_exists, Path}}) ->
+    io_lib:format(
+        "generate: legal export directory already exists: ~ts",
+        [Path]
+    );
+format_generate_error({legal_export_failed, Reason}) ->
+    io_lib:format(
+        "generate: legal-info export failed: ~tp",
+        [Reason]
     );
 format_generate_error({context_failed, Reason}) ->
     io_lib:format(

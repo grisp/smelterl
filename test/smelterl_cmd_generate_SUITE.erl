@@ -12,6 +12,7 @@
     generate_requires_output_manifest_for_export_legal/1,
     generate_requires_export_legal_for_include_sources/1,
     generate_accepts_valid_main_and_auxiliary_target_selection/1,
+    generate_exports_merged_legal_tree/1,
     generate_reports_unknown_auxiliary_target/1,
     generate_writes_config_in_from_plan_extra_config/1,
     generate_writes_external_mk_from_plan/1,
@@ -30,6 +31,7 @@ all() ->
         generate_requires_output_manifest_for_export_legal,
         generate_requires_export_legal_for_include_sources,
         generate_accepts_valid_main_and_auxiliary_target_selection,
+        generate_exports_merged_legal_tree,
         generate_reports_unknown_auxiliary_target,
         generate_writes_config_in_from_plan_extra_config,
         generate_writes_external_mk_from_plan,
@@ -117,17 +119,13 @@ generate_requires_export_legal_for_include_sources(_Config) ->
 generate_accepts_valid_main_and_auxiliary_target_selection(_Config) ->
     PlanPath = write_sample_plan_file(),
     OutputDir = make_temp_dir("smelterl-generate-output"),
-    MainManifest = filename:join(OutputDir, "ALLOY_SDK_MANIFEST"),
     MainExternalDesc = filename:join(OutputDir, "main.external.desc"),
     AuxiliaryExternalDesc = filename:join(OutputDir, "aux.external.desc"),
     {StatusMain, OutputMain} = run_main([
         "generate",
         "--plan", PlanPath,
         "--output-external-desc", MainExternalDesc,
-        "--output-manifest", MainManifest,
-        "--buildroot-legal", filename:join(OutputDir, "legal-main"),
-        "--export-legal", "legal-info",
-        "--include-sources"
+        "--output-manifest", filename:join(OutputDir, "ALLOY_SDK_MANIFEST")
     ]),
     assert_equal(0, StatusMain),
     assert_equal(<<>>, OutputMain),
@@ -141,6 +139,35 @@ generate_accepts_valid_main_and_auxiliary_target_selection(_Config) ->
     assert_equal(0, StatusAux),
     assert_equal(<<>>, OutputAux),
     assert_file_content(AuxiliaryExternalDesc, expected_external_desc()).
+
+generate_exports_merged_legal_tree(_Config) ->
+    PlanPath = write_sample_plan_file(),
+    OutputDir = make_temp_dir("smelterl-generate-legal-export"),
+    {AuxLegalDir, MainLegalDir} = write_generate_legal_inputs(OutputDir),
+    MainManifest = filename:join(OutputDir, "ALLOY_SDK_MANIFEST"),
+    {Status, Output} = run_main([
+        "generate",
+        "--plan", PlanPath,
+        "--output-manifest", MainManifest,
+        "--buildroot-legal", AuxLegalDir,
+        "--buildroot-legal", MainLegalDir,
+        "--export-legal", "legal-info"
+    ]),
+    assert_equal(0, Status),
+    assert_equal(<<>>, Output),
+    assert_file_contains(
+        filename:join(OutputDir, "legal-info/README"),
+        [
+            <<"--- From Buildroot (auxiliary: aux_alpha) ---">>,
+            <<"Aux target README">>,
+            <<"--- From Buildroot (main) ---">>,
+            <<"Main target README">>
+        ]
+    ),
+    assert_file_content(
+        filename:join(OutputDir, "legal-info/buildroot.config"),
+        <<"BR2_TARGET=main\n">>
+    ).
 
 generate_reports_unknown_auxiliary_target(_Config) ->
     PlanPath = write_sample_plan_file(),
@@ -727,6 +754,69 @@ sample_target_with_packages() ->
 expected_external_desc() ->
     <<"name: DEMO\n"
       "desc: Demo product BSP - Version 1.2.3\n">>.
+
+write_generate_legal_inputs(OutputDir) ->
+    AuxLegalDir = filename:join(OutputDir, "targets/aux_alpha/workspace/legal-info"),
+    MainLegalDir = filename:join(OutputDir, "targets/main/workspace/legal-info"),
+    write_generate_legal_input(
+        AuxLegalDir,
+        <<"Aux target README\n">>,
+        <<"BR2_TARGET=aux\n">>,
+        [
+            <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n">>,
+            <<"\"auxpkg\",\"0.1.0\",\"Apache-2.0\",\"LICENSE\"\n">>
+        ],
+        [
+            <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n">>,
+            <<"\"buildroot\",\"2025.02.1\",\"GPL-2.0+\",\"COPYING\"\n">>
+        ],
+        [
+            "licenses/auxpkg-0.1.0/LICENSE",
+            "host-licenses/buildroot/COPYING"
+        ]
+    ),
+    write_generate_legal_input(
+        MainLegalDir,
+        <<"Main target README\n">>,
+        <<"BR2_TARGET=main\n">>,
+        [
+            <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n">>,
+            <<"\"mainpkg\",\"1.0.0\",\"BSD-3-Clause\",\"LICENSE\"\n">>
+        ],
+        [
+            <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n">>,
+            <<"\"buildroot\",\"2025.02.1\",\"GPL-2.0+\",\"COPYING\"\n">>,
+            <<"\"host-main\",\"1.1\",\"Apache-2.0\",\"LICENSE\"\n">>
+        ],
+        [
+            "licenses/mainpkg-1.0.0/LICENSE",
+            "host-licenses/buildroot/COPYING",
+            "host-licenses/host-main-1.1/LICENSE"
+        ]
+    ),
+    {AuxLegalDir, MainLegalDir}.
+
+write_generate_legal_input(
+    LegalDir,
+    Readme,
+    BuildrootConfig,
+    ManifestLines,
+    HostManifestLines,
+    LicensePaths
+) ->
+    ok = filelib:ensure_dir(filename:join(LegalDir, "dummy")),
+    ok = file:write_file(filename:join(LegalDir, "manifest.csv"), ManifestLines),
+    ok = file:write_file(filename:join(LegalDir, "host-manifest.csv"), HostManifestLines),
+    ok = file:write_file(filename:join(LegalDir, "README"), Readme),
+    ok = file:write_file(filename:join(LegalDir, "buildroot.config"), BuildrootConfig),
+    lists:foreach(
+        fun(RelativePath) ->
+            FullPath = filename:join(LegalDir, RelativePath),
+            ok = filelib:ensure_dir(FullPath),
+            ok = file:write_file(FullPath, <<"fixture\n">>)
+        end,
+        LicensePaths
+    ).
 
 make_temp_dir(Prefix) ->
     make_temp_dir(Prefix, 0).

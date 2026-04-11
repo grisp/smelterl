@@ -139,6 +139,10 @@ template_filename(alloy_context) ->
     "alloy_context.sh.mustache";
 template_filename(<<"alloy_context">>) ->
     "alloy_context.sh.mustache";
+template_filename(legal_readme) ->
+    "README.mustache";
+template_filename(<<"legal_readme">>) ->
+    "README.mustache";
 template_filename(_TemplateKey) ->
     undefined.
 

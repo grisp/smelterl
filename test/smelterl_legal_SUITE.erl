@@ -7,6 +7,9 @@
     parse_legal_extracts_target_and_host_packages/1,
     parse_legal_resolves_license_paths_relative_to_legal_info_root/1,
     parse_legal_accepts_buildroot_bare_quotes_inside_license_field/1,
+    export_legal_merges_buildroot_trees_and_preserves_readme_blocks/1,
+    export_legal_includes_sources_when_requested/1,
+    export_legal_rejects_existing_export_directory/1,
     parse_legal_rejects_invalid_path/1,
     parse_legal_rejects_missing_manifest_file/1,
     parse_legal_rejects_malformed_manifest/1
@@ -17,6 +20,9 @@ all() ->
         parse_legal_extracts_target_and_host_packages,
         parse_legal_resolves_license_paths_relative_to_legal_info_root,
         parse_legal_accepts_buildroot_bare_quotes_inside_license_field,
+        export_legal_merges_buildroot_trees_and_preserves_readme_blocks,
+        export_legal_includes_sources_when_requested,
+        export_legal_rejects_existing_export_directory,
         parse_legal_rejects_invalid_path,
         parse_legal_rejects_missing_manifest_file,
         parse_legal_rejects_malformed_manifest
@@ -198,6 +204,89 @@ parse_legal_accepts_buildroot_bare_quotes_inside_license_field(_Config) ->
         maps:get(host_packages, LegalInfo)
     ).
 
+export_legal_merges_buildroot_trees_and_preserves_readme_blocks(_Config) ->
+    {AuxLegalDir, MainLegalDir} = make_export_legal_inputs(),
+    ExportDir = filename:join(make_temp_dir("smelterl-legal-export"), "legal-info"),
+    ok = smelterl_legal:export_legal(
+        [
+            unicode:characters_to_binary(AuxLegalDir),
+            unicode:characters_to_binary(MainLegalDir)
+        ],
+        unicode:characters_to_binary(ExportDir),
+        false
+    ),
+    assert_file_content(
+        filename:join(ExportDir, "manifest.csv"),
+        expected_merged_manifest_csv()
+    ),
+    assert_file_content(
+        filename:join(ExportDir, "host-manifest.csv"),
+        expected_merged_host_manifest_csv()
+    ),
+    assert_file_content(
+        filename:join(ExportDir, "buildroot.config"),
+        <<"BR2_TARGET=main\n">>
+    ),
+    assert_file_contains(
+        filename:join(ExportDir, "README"),
+        [
+            <<"--- From Buildroot (auxiliary: aux_alpha) ---">>,
+            <<"Aux target README">>,
+            <<"WARNING: aux warning">>,
+            <<"--- From Buildroot (main) ---">>,
+            <<"Main target README">>,
+            <<"WARNING: main warning">>
+        ]
+    ),
+    assert_file_exists(filename:join(ExportDir, "licenses/auxpkg-0.1.0/LICENSE")),
+    assert_file_exists(filename:join(ExportDir, "licenses/mainpkg-1.0.0/LICENSE")),
+    assert_file_exists(filename:join(ExportDir, "licenses/sharedpkg-2.0.0/COPYING")),
+    assert_file_exists(filename:join(ExportDir, "host-licenses/host-aux-1.0/LICENSE")),
+    assert_file_exists(filename:join(ExportDir, "host-licenses/host-main-1.1/LICENSE")),
+    assert_file_exists(filename:join(ExportDir, "host-licenses/shared-host-3.0/COPYING")),
+    assert_file_missing(filename:join(ExportDir, "sources")),
+    assert_file_missing(filename:join(ExportDir, "host-sources")),
+    assert_file_contains(
+        filename:join(ExportDir, "legal-info.sha256"),
+        [
+            <<"README">>,
+            <<"buildroot.config">>,
+            <<"manifest.csv">>,
+            <<"host-manifest.csv">>
+        ]
+    ).
+
+export_legal_includes_sources_when_requested(_Config) ->
+    {AuxLegalDir, MainLegalDir} = make_export_legal_inputs(),
+    ExportDir = filename:join(make_temp_dir("smelterl-legal-export-sources"), "legal-info"),
+    ok = smelterl_legal:export_legal(
+        [
+            unicode:characters_to_binary(AuxLegalDir),
+            unicode:characters_to_binary(MainLegalDir)
+        ],
+        unicode:characters_to_binary(ExportDir),
+        true
+    ),
+    assert_file_exists(filename:join(ExportDir, "sources/auxpkg-0.1.0/source.txt")),
+    assert_file_exists(filename:join(ExportDir, "sources/mainpkg-1.0.0/source.txt")),
+    assert_file_exists(filename:join(ExportDir, "host-sources/host-main-1.1/source.txt")),
+    assert_file_contains(
+        filename:join(ExportDir, "README"),
+        [<<"sources/">>, <<"host-sources/">>]
+    ).
+
+export_legal_rejects_existing_export_directory(_Config) ->
+    {AuxLegalDir, MainLegalDir} = make_export_legal_inputs(),
+    ExportDir = make_temp_dir("smelterl-legal-export-existing"),
+    {error, {export_exists, _Path}} = smelterl_legal:export_legal(
+        [
+            unicode:characters_to_binary(AuxLegalDir),
+            unicode:characters_to_binary(MainLegalDir)
+        ],
+        unicode:characters_to_binary(ExportDir),
+        false
+    ).
+
 parse_legal_rejects_invalid_path(_Config) ->
     MissingDir = unicode:characters_to_binary(filename:join(make_temp_dir("smelterl-legal-missing"), "missing")),
     {error, {invalid_path, MissingDir, _Detail}} = smelterl_legal:parse_legal(MissingDir).
@@ -235,12 +324,146 @@ parse_legal_rejects_malformed_manifest(_Config) ->
     {error, {missing_manifest, LegalPath, _Detail}} =
         smelterl_legal:parse_legal(LegalPath).
 
+make_export_legal_inputs() ->
+    BaseDir = make_temp_dir("smelterl-legal-export-inputs"),
+    AuxLegalDir = filename:join(BaseDir, "targets/aux_alpha/workspace/legal-info"),
+    MainLegalDir = filename:join(BaseDir, "targets/main/workspace/legal-info"),
+    write_export_input(
+        AuxLegalDir,
+        <<"Aux target README\nWARNING: aux warning\n">>,
+        <<"BR2_TARGET=aux\n">>,
+        [
+            <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n">>,
+            <<"\"auxpkg\",\"0.1.0\",\"Apache-2.0\",\"LICENSE\"\n">>,
+            <<"\"sharedpkg\",\"2.0.0\",\"MIT\",\"COPYING\"\n">>
+        ],
+        [
+            <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n">>,
+            <<"\"buildroot\",\"2025.02.1\",\"GPL-2.0+\",\"COPYING\"\n">>,
+            <<"\"host-aux\",\"1.0\",\"BSD-2-Clause\",\"LICENSE\"\n">>,
+            <<"\"shared-host\",\"3.0\",\"Zlib\",\"COPYING\"\n">>
+        ],
+        [
+            "licenses/auxpkg-0.1.0/LICENSE",
+            "licenses/sharedpkg-2.0.0/COPYING",
+            "host-licenses/buildroot/COPYING",
+            "host-licenses/host-aux-1.0/LICENSE",
+            "host-licenses/shared-host-3.0/COPYING"
+        ],
+        [
+            "sources/auxpkg-0.1.0/source.txt",
+            "host-sources/host-aux-1.0/source.txt"
+        ]
+    ),
+    write_export_input(
+        MainLegalDir,
+        <<"Main target README\nWARNING: main warning\n">>,
+        <<"BR2_TARGET=main\n">>,
+        [
+            <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n">>,
+            <<"\"mainpkg\",\"1.0.0\",\"BSD-3-Clause\",\"LICENSE\"\n">>,
+            <<"\"sharedpkg\",\"2.0.0\",\"MIT\",\"COPYING\"\n">>
+        ],
+        [
+            <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n">>,
+            <<"\"buildroot\",\"2025.02.1\",\"GPL-2.0+\",\"COPYING\"\n">>,
+            <<"\"host-main\",\"1.1\",\"Apache-2.0\",\"LICENSE\"\n">>,
+            <<"\"shared-host\",\"3.0\",\"Zlib\",\"COPYING\"\n">>
+        ],
+        [
+            "licenses/mainpkg-1.0.0/LICENSE",
+            "licenses/sharedpkg-2.0.0/COPYING",
+            "host-licenses/buildroot/COPYING",
+            "host-licenses/host-main-1.1/LICENSE",
+            "host-licenses/shared-host-3.0/COPYING"
+        ],
+        [
+            "sources/mainpkg-1.0.0/source.txt",
+            "host-sources/host-main-1.1/source.txt"
+        ]
+    ),
+    {AuxLegalDir, MainLegalDir}.
+
+write_export_input(
+    LegalDir,
+    Readme,
+    BuildrootConfig,
+    ManifestLines,
+    HostManifestLines,
+    LicensePaths,
+    SourcePaths
+) ->
+    ok = filelib:ensure_dir(filename:join(LegalDir, "dummy")),
+    ok = write_manifest(filename:join(LegalDir, "manifest.csv"), ManifestLines),
+    ok = write_manifest(filename:join(LegalDir, "host-manifest.csv"), HostManifestLines),
+    ok = file:write_file(filename:join(LegalDir, "README"), Readme),
+    ok = file:write_file(filename:join(LegalDir, "buildroot.config"), BuildrootConfig),
+    ok = make_license_tree(LegalDir, LicensePaths),
+    ok = make_source_tree(LegalDir, SourcePaths).
+
+expected_merged_manifest_csv() ->
+    <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n"
+      "\"auxpkg\",\"0.1.0\",\"Apache-2.0\",\"LICENSE\"\n"
+      "\"mainpkg\",\"1.0.0\",\"BSD-3-Clause\",\"LICENSE\"\n"
+      "\"sharedpkg\",\"2.0.0\",\"MIT\",\"COPYING\"\n">>.
+
+expected_merged_host_manifest_csv() ->
+    <<"\"PACKAGE\",\"VERSION\",\"LICENSE\",\"LICENSE FILES\"\n"
+      "\"buildroot\",\"2025.02.1\",\"GPL-2.0+\",\"COPYING\"\n"
+      "\"host-aux\",\"1.0\",\"BSD-2-Clause\",\"LICENSE\"\n"
+      "\"host-main\",\"1.1\",\"Apache-2.0\",\"LICENSE\"\n"
+      "\"shared-host\",\"3.0\",\"Zlib\",\"COPYING\"\n">>.
+
 assert_equal(Expected, Actual) ->
     case Actual of
         Expected ->
             ok;
         _ ->
             ct:fail("Expected ~tp but got ~tp", [Expected, Actual])
+    end.
+
+assert_file_exists(Path) ->
+    case file:read_file_info(Path) of
+        {ok, _Info} ->
+            ok;
+        {error, Reason} ->
+            ct:fail("Expected file ~ts to exist: ~tp", [Path, Reason])
+    end.
+
+assert_file_content(Path, Expected) ->
+    case file:read_file(Path) of
+        {ok, Expected} ->
+            ok;
+        {ok, Actual} ->
+            ct:fail("Expected ~ts to contain ~tp, got ~tp", [Path, Expected, Actual]);
+        {error, Reason} ->
+            ct:fail("Failed to read ~ts: ~tp", [Path, Reason])
+    end.
+
+assert_file_missing(Path) ->
+    case file:read_file_info(Path) of
+        {error, enoent} ->
+            ok;
+        {ok, _Info} ->
+            ct:fail("Expected ~ts to be missing", [Path]);
+        {error, Reason} ->
+            ct:fail("Unexpected file-info result for ~ts: ~tp", [Path, Reason])
+    end.
+
+assert_file_contains(Path, Needles) ->
+    case file:read_file(Path) of
+        {ok, Content} ->
+            lists:foreach(fun(Needle) -> assert_contains(Content, Needle) end, Needles);
+        {error, Reason} ->
+            ct:fail("Failed to read ~ts: ~tp", [Path, Reason])
+    end.
+
+assert_contains(Haystack, Needle) ->
+    case binary:match(Haystack, Needle) of
+        nomatch ->
+            ct:fail("Expected ~tp to contain ~tp", [Haystack, Needle]);
+        _ ->
+            ok
     end.
 
 make_temp_dir(Prefix) ->
@@ -260,3 +483,11 @@ make_license_tree(LegalDir, [RelativePath | Rest]) ->
     ok = filelib:ensure_dir(FullPath),
     ok = file:write_file(FullPath, <<"license fixture\n">>),
     make_license_tree(LegalDir, Rest).
+
+make_source_tree(_LegalDir, []) ->
+    ok;
+make_source_tree(LegalDir, [RelativePath | Rest]) ->
+    FullPath = filename:join(LegalDir, RelativePath),
+    ok = filelib:ensure_dir(FullPath),
+    ok = file:write_file(FullPath, <<"source fixture\n">>),
+    make_source_tree(LegalDir, Rest).

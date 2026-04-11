@@ -3,10 +3,12 @@
 
 -module(smelterl_legal).
 -moduledoc """
-Parse Buildroot `legal-info/` CSV manifests into one reusable data structure.
+Parse and export Buildroot `legal-info/` data for Smelterl generate stages.
 
-This task only implements single-tree parsing. Merging and export of multiple
-legal trees remain separate follow-up work.
+`parse_legal/1` parses one Buildroot `legal-info/` tree into reusable package
+data. `export_legal/3` merges one or more such trees into a deterministic
+export directory, preserving README blocks per input while deduplicating the
+copied manifests and file trees.
 """.
 
 -include_lib("kernel/include/file.hrl").
@@ -15,6 +17,7 @@ legal trees remain separate follow-up work.
 %=== EXPORTS ===================================================================
 
 -export([parse_legal/1]).
+-export([export_legal/3]).
 
 
 %=== API FUNCTIONS =============================================================
@@ -47,8 +50,76 @@ parse_legal(Path) ->
             Error
     end.
 
+-doc """
+Merge one or more Buildroot `legal-info/` trees into one exported directory.
+""".
+-spec export_legal(
+    [smelterl:file_path()],
+    smelterl:file_path(),
+    boolean()
+) -> ok | {error, term()}.
+export_legal(BuildrootPaths, ExportDir, IncludeSources) ->
+    AbsoluteExportDir = absolute_binary_path(ExportDir),
+    maybe
+        ok ?= ensure_export_dir_absent(AbsoluteExportDir),
+        {ok, Inputs} ?= load_legal_inputs(BuildrootPaths, 1, []),
+        {ok, BuildrootVersion, Packages, HostPackages} ?= merge_legal_inputs(
+            Inputs
+        ),
+        ok ?= ensure_directory(AbsoluteExportDir),
+        ok ?= maybe_copy_buildroot_config(Inputs, AbsoluteExportDir),
+        ok ?= copy_tree_set(Inputs, AbsoluteExportDir, <<"licenses">>),
+        ok ?= copy_tree_set(Inputs, AbsoluteExportDir, <<"host-licenses">>),
+        ok ?= maybe_copy_sources(
+            IncludeSources,
+            Inputs,
+            AbsoluteExportDir
+        ),
+        ok ?= maybe_write_manifest(
+            Inputs,
+            filename:join(
+                binary_to_list(AbsoluteExportDir),
+                "manifest.csv"
+            ),
+            target,
+            BuildrootVersion,
+            Packages
+        ),
+        ok ?= maybe_write_manifest(
+            Inputs,
+            filename:join(
+                binary_to_list(AbsoluteExportDir),
+                "host-manifest.csv"
+            ),
+            host,
+            BuildrootVersion,
+            HostPackages
+        ),
+        ok ?= write_readme(
+            filename:join(binary_to_list(AbsoluteExportDir), "README"),
+            Inputs,
+            IncludeSources
+        ),
+        ok ?= write_sha256(AbsoluteExportDir)
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
 
 %=== INTERNAL FUNCTIONS ========================================================
+
+-type legal_input() :: #{
+    label := binary(),
+    path := smelterl:file_path(),
+    readme := binary(),
+    br_version := binary(),
+    packages := [smelterl:br_package_entry()],
+    host_packages := [smelterl:br_package_entry()],
+    target_kind := main | auxiliary | input
+}.
+
+-type manifest_kind() :: target | host.
 
 -spec ensure_legal_dir(smelterl:file_path()) -> ok | {error, term()}.
 ensure_legal_dir(LegalPath) ->
@@ -63,6 +134,548 @@ ensure_legal_dir(LegalPath) ->
         {error, Posix} ->
             {error, {invalid_path, LegalPath, Posix}}
     end.
+
+-spec ensure_export_dir_absent(smelterl:file_path()) -> ok | {error, term()}.
+ensure_export_dir_absent(Path) ->
+    case file:read_file_info(binary_to_list(Path)) of
+        {ok, _Info} ->
+            {error, {export_exists, Path}};
+        {error, enoent} ->
+            ok;
+        {error, Posix} ->
+            {error, {export_exists_check_failed, Path, Posix}}
+    end.
+
+-spec ensure_directory(smelterl:file_path()) -> ok | {error, term()}.
+ensure_directory(Path) ->
+    case filelib:ensure_dir(filename:join(binary_to_list(Path), "dummy")) of
+        ok ->
+            ok;
+        {error, Posix} ->
+            {error, {dir_error, Path, Posix}}
+    end.
+
+-spec load_legal_inputs([smelterl:file_path()], pos_integer(), [legal_input()]) ->
+    {ok, [legal_input()]} | {error, term()}.
+load_legal_inputs([], _Index, Acc) ->
+    {ok, lists:reverse(Acc)};
+load_legal_inputs([Path | Rest], Index, Acc) ->
+    maybe
+        {ok, LegalInfo} ?= parse_legal(Path),
+        {ok, Readme} ?= read_legal_readme(maps:get(path, LegalInfo)),
+        Input = build_legal_input(Index, LegalInfo, Readme),
+        load_legal_inputs(Rest, Index + 1, [Input | Acc])
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec read_legal_readme(smelterl:file_path()) -> {ok, binary()} | {error, term()}.
+read_legal_readme(LegalPath) ->
+    ReadmePath = filename:join(binary_to_list(LegalPath), "README"),
+    case file:read_file(ReadmePath) of
+        {ok, Content} ->
+            {ok, Content};
+        {error, Posix} ->
+            {error, {missing_readme, LegalPath, Posix}}
+    end.
+
+-spec build_legal_input(pos_integer(), smelterl:br_legal_info(), binary()) ->
+    legal_input().
+build_legal_input(Index, LegalInfo, Readme) ->
+    LegalPath = maps:get(path, LegalInfo),
+    {TargetKind, Label} = infer_input_label(LegalPath, Index),
+    #{
+        label => Label,
+        path => LegalPath,
+        readme => Readme,
+        br_version => maps:get(br_version, LegalInfo),
+        packages => maps:get(packages, LegalInfo),
+        host_packages => maps:get(host_packages, LegalInfo),
+        target_kind => TargetKind
+    }.
+
+-spec infer_input_label(smelterl:file_path(), pos_integer()) ->
+    {main | auxiliary | input, binary()}.
+infer_input_label(LegalPath, Index) ->
+    case infer_target_id(LegalPath) of
+        {main, _TargetId} ->
+            {main, <<"main">>};
+        {auxiliary, TargetId} ->
+            {auxiliary, <<"auxiliary: ", TargetId/binary>>};
+        undefined ->
+            {
+                input,
+                unicode:characters_to_binary(
+                    io_lib:format("input ~B", [Index])
+                )
+            }
+    end.
+
+-spec infer_target_id(smelterl:file_path()) ->
+    {main, binary()} | {auxiliary, binary()} | undefined.
+infer_target_id(LegalPath) ->
+    Parts = [
+        unicode:characters_to_binary(Part)
+     || Part <- filename:split(binary_to_list(LegalPath))
+    ],
+    infer_target_id_parts(Parts).
+
+infer_target_id_parts([<<"targets">>, TargetId, <<"workspace">>, <<"legal-info">> | _Rest]) ->
+    case TargetId of
+        <<"main">> ->
+            {main, TargetId};
+        _ ->
+            {auxiliary, TargetId}
+    end;
+infer_target_id_parts([_Part | Rest]) ->
+    infer_target_id_parts(Rest);
+infer_target_id_parts([]) ->
+    undefined.
+
+-spec merge_legal_inputs([legal_input()]) ->
+    {ok, binary(), [smelterl:br_package_entry()], [smelterl:br_package_entry()]} |
+    {error, term()}.
+merge_legal_inputs(Inputs) ->
+    maybe
+        {ok, BuildrootVersion} ?= merge_buildroot_versions(Inputs),
+        {ok, Packages} ?= merge_package_entries(Inputs, packages),
+        {ok, HostPackages} ?= merge_package_entries(Inputs, host_packages),
+        {ok, BuildrootVersion, Packages, HostPackages}
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec merge_buildroot_versions([legal_input()]) -> {ok, binary()} | {error, term()}.
+merge_buildroot_versions(Inputs) ->
+    Versions = lists:usort([
+        Version
+     || #{br_version := Version} <- Inputs,
+        Version =/= <<>>
+    ]),
+    case Versions of
+        [] ->
+            {ok, <<>>};
+        [Version] ->
+            {ok, Version};
+        _ ->
+            {error, {conflicting_buildroot_versions, Versions}}
+    end.
+
+-spec merge_package_entries([legal_input()], packages | host_packages) ->
+    {ok, [smelterl:br_package_entry()]} | {error, term()}.
+merge_package_entries(Inputs, Field) ->
+    merge_package_entries(Inputs, Field, #{}, []).
+
+merge_package_entries([], _Field, _Seen, Acc) ->
+    {ok, lists:sort(fun compare_package_entries/2, Acc)};
+merge_package_entries([Input | Rest], Field, Seen, Acc) ->
+    Entries = maps:get(Field, Input),
+    case merge_package_entry_list(Entries, Field, Seen, Acc) of
+        {ok, Seen1, Acc1} ->
+            merge_package_entries(Rest, Field, Seen1, Acc1);
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec merge_package_entry_list(
+    [smelterl:br_package_entry()],
+    packages | host_packages,
+    #{{binary(), binary()} => smelterl:br_package_entry()},
+    [smelterl:br_package_entry()]
+) ->
+    {ok, #{{binary(), binary()} => smelterl:br_package_entry()}, [smelterl:br_package_entry()]} |
+    {error, term()}.
+merge_package_entry_list([], _Field, Seen, Acc) ->
+    {ok, Seen, Acc};
+merge_package_entry_list([Entry | Rest], Field, Seen, Acc) ->
+    Key = {maps:get(name, Entry), maps:get(version, Entry)},
+    case maps:get(Key, Seen, undefined) of
+        undefined ->
+            merge_package_entry_list(
+                Rest,
+                Field,
+                maps:put(Key, Entry, Seen),
+                [Entry | Acc]
+            );
+        Entry ->
+            merge_package_entry_list(Rest, Field, Seen, Acc);
+        Existing ->
+            {error,
+                {conflicting_package_entry,
+                    Field,
+                    maps:get(name, Entry),
+                    maps:get(version, Entry),
+                    Existing,
+                    Entry}}
+    end.
+
+-spec compare_package_entries(
+    smelterl:br_package_entry(),
+    smelterl:br_package_entry()
+) -> boolean().
+compare_package_entries(Left, Right) ->
+    package_sort_key(Left) =< package_sort_key(Right).
+
+-spec package_sort_key(smelterl:br_package_entry()) -> tuple().
+package_sort_key(Entry) ->
+    {
+        maps:get(name, Entry),
+        maps:get(version, Entry),
+        maps:get(license, Entry),
+        maps:get(license_files, Entry)
+    }.
+
+-spec maybe_copy_buildroot_config([legal_input()], smelterl:file_path()) ->
+    ok | {error, term()}.
+maybe_copy_buildroot_config([], _ExportDir) ->
+    ok;
+maybe_copy_buildroot_config(Inputs, ExportDir) ->
+    SelectedInput = select_buildroot_config_input(Inputs),
+    Source = filename:join(
+        binary_to_list(maps:get(path, SelectedInput)),
+        "buildroot.config"
+    ),
+    Destination = filename:join(binary_to_list(ExportDir), "buildroot.config"),
+    case file:read_file_info(Source) of
+        {ok, _Info} ->
+            copy_file_with_validation(Source, Destination);
+        {error, enoent} ->
+            ok;
+        {error, Posix} ->
+            {error, {copy_failed, path_to_binary(Source), path_to_binary(Destination), Posix}}
+    end.
+
+-spec select_buildroot_config_input([legal_input()]) -> legal_input().
+select_buildroot_config_input(Inputs) ->
+    case [Input || Input <- Inputs, maps:get(target_kind, Input) =:= main] of
+        [MainInput | _Rest] ->
+            MainInput;
+        [] ->
+            lists:last(Inputs)
+    end.
+
+-spec copy_tree_set([legal_input()], smelterl:file_path(), binary()) ->
+    ok | {error, term()}.
+copy_tree_set([], _ExportDir, _Subdir) ->
+    ok;
+copy_tree_set([Input | Rest], ExportDir, Subdir) ->
+    SourceRoot = join_os_path(maps:get(path, Input), Subdir),
+    DestinationRoot = join_os_path(ExportDir, Subdir),
+    case maybe_copy_tree(SourceRoot, DestinationRoot) of
+        ok ->
+            copy_tree_set(Rest, ExportDir, Subdir);
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec maybe_copy_sources(boolean(), [legal_input()], smelterl:file_path()) ->
+    ok | {error, term()}.
+maybe_copy_sources(false, _Inputs, _ExportDir) ->
+    ok;
+maybe_copy_sources(true, Inputs, ExportDir) ->
+    maybe
+        ok ?= copy_tree_set(Inputs, ExportDir, <<"sources">>),
+        ok ?= copy_tree_set(Inputs, ExportDir, <<"host-sources">>),
+        ok
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec maybe_copy_tree(smelterl:file_path(), smelterl:file_path()) ->
+    ok | {error, term()}.
+maybe_copy_tree(SourceRoot, DestinationRoot) ->
+    case file:read_file_info(binary_to_list(SourceRoot)) of
+        {ok, #file_info{type = directory}} ->
+            copy_tree(SourceRoot, DestinationRoot);
+        {error, enoent} ->
+            ok;
+        {error, Posix} ->
+            {error, {copy_failed, SourceRoot, DestinationRoot, Posix}};
+        {ok, _Info} ->
+            {error, {copy_failed, SourceRoot, DestinationRoot, not_directory}}
+    end.
+
+-spec copy_tree(smelterl:file_path(), smelterl:file_path()) -> ok | {error, term()}.
+copy_tree(SourceRoot, DestinationRoot) ->
+    case ensure_directory(DestinationRoot) of
+        ok ->
+            Files = lists:sort(
+                filelib:fold_files(
+                    binary_to_list(SourceRoot),
+                    ".*",
+                    true,
+                    fun(Path, Acc) -> [path_to_binary(Path) | Acc] end,
+                    []
+                )
+            ),
+            copy_tree_files(Files, SourceRoot, DestinationRoot);
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec copy_tree_files(
+    [smelterl:file_path()],
+    smelterl:file_path(),
+    smelterl:file_path()
+) -> ok | {error, term()}.
+copy_tree_files([], _SourceRoot, _DestinationRoot) ->
+    ok;
+copy_tree_files([SourceFile | Rest], SourceRoot, DestinationRoot) ->
+    RelativePath = smelterl_file:relativize(SourceFile, SourceRoot),
+    DestinationFile = join_os_path(DestinationRoot, RelativePath),
+    case copy_file_with_validation(SourceFile, DestinationFile) of
+        ok ->
+            copy_tree_files(Rest, SourceRoot, DestinationRoot);
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec copy_file_with_validation(
+    smelterl:file_path() | string(),
+    smelterl:file_path() | string()
+) -> ok | {error, term()}.
+copy_file_with_validation(Source0, Destination0) ->
+    Source = path_to_binary(Source0),
+    Destination = path_to_binary(Destination0),
+    maybe
+        ok ?= ensure_parent_dir(Destination),
+        case file:read_file(binary_to_list(Source)) of
+            {ok, Content} ->
+                write_or_validate_copy(Source, Destination, Content);
+            {error, Posix} ->
+                {error, {copy_failed, Source, Destination, Posix}}
+        end
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec ensure_parent_dir(smelterl:file_path()) -> ok | {error, term()}.
+ensure_parent_dir(Path) ->
+    case filelib:ensure_dir(binary_to_list(Path)) of
+        ok ->
+            ok;
+        {error, Posix} ->
+            {error, {dir_error, Path, Posix}}
+    end.
+
+-spec write_or_validate_copy(
+    smelterl:file_path(),
+    smelterl:file_path(),
+    binary()
+) -> ok | {error, term()}.
+write_or_validate_copy(Source, Destination, Content) ->
+    case file:read_file(binary_to_list(Destination)) of
+        {ok, Content} ->
+            ok;
+        {ok, ExistingContent} ->
+            {error,
+                {copy_conflict,
+                    Source,
+                    Destination,
+                    {content_mismatch, ExistingContent, Content}}};
+        {error, enoent} ->
+            case file:write_file(binary_to_list(Destination), Content) of
+                ok ->
+                    ok;
+                {error, Posix} ->
+                    {error, {copy_failed, Source, Destination, Posix}}
+            end;
+        {error, Posix} ->
+            {error, {copy_failed, Source, Destination, Posix}}
+    end.
+
+-spec maybe_write_manifest(
+    [legal_input()],
+    string(),
+    manifest_kind(),
+    binary(),
+    [smelterl:br_package_entry()]
+) -> ok | {error, term()}.
+maybe_write_manifest([], _Path, _ManifestKind, _BuildrootVersion, _Packages) ->
+    ok;
+maybe_write_manifest(_Inputs, Path, ManifestKind, BuildrootVersion, Packages) ->
+    Rows =
+        case ManifestKind of
+            target ->
+                Packages;
+            host when BuildrootVersion =:= <<>> ->
+                Packages;
+            host ->
+                [buildroot_package_entry(BuildrootVersion) | Packages]
+        end,
+    smelterl_file:write_iodata(
+        Path,
+        render_manifest(ManifestKind, Rows)
+    ).
+
+-spec buildroot_package_entry(binary()) -> smelterl:br_package_entry().
+buildroot_package_entry(BuildrootVersion) ->
+    #{
+        name => <<"buildroot">>,
+        version => BuildrootVersion,
+        license => <<"GPL-2.0+">>,
+        license_files => [<<"host-licenses/buildroot/COPYING">>]
+    }.
+
+-spec render_manifest(manifest_kind(), [smelterl:br_package_entry()]) -> iodata().
+render_manifest(ManifestKind, Packages) ->
+    Header =
+        render_csv_row([
+            <<"PACKAGE">>,
+            <<"VERSION">>,
+            <<"LICENSE">>,
+            <<"LICENSE FILES">>
+        ]),
+    Rows = [
+        render_csv_row(entry_to_csv_fields(ManifestKind, Entry))
+     || Entry <- Packages
+    ],
+    [Header | Rows].
+
+-spec entry_to_csv_fields(manifest_kind(), smelterl:br_package_entry()) ->
+    [binary()].
+entry_to_csv_fields(ManifestKind, Entry) ->
+    Name = maps:get(name, Entry),
+    Version = maps:get(version, Entry),
+    [
+        Name,
+        Version,
+        maps:get(license, Entry),
+        join_csv_license_files(
+            manifest_license_files(
+                ManifestKind,
+                Name,
+                Version,
+                maps:get(license_files, Entry)
+            )
+        )
+    ].
+
+-spec manifest_license_files(
+    manifest_kind(),
+    binary(),
+    binary(),
+    [smelterl:file_path()]
+) -> [binary()].
+manifest_license_files(ManifestKind, Name, Version, LicenseFiles) ->
+    Root = manifest_license_root(ManifestKind, Name, Version),
+    [strip_path_prefix(Path, Root) || Path <- LicenseFiles].
+
+-spec manifest_license_root(manifest_kind(), binary(), binary()) -> binary().
+manifest_license_root(target, Name, Version) ->
+    fallback_license_root(<<"licenses">>, Name, Version);
+manifest_license_root(host, Name, Version) ->
+    fallback_license_root(<<"host-licenses">>, Name, Version).
+
+-spec strip_path_prefix(binary(), binary()) -> binary().
+strip_path_prefix(Path, Prefix) ->
+    PrefixWithSlash = <<Prefix/binary, "/">>,
+    case Path =:= Prefix of
+        true ->
+            <<>>;
+        false ->
+            case binary:match(Path, PrefixWithSlash) of
+                {0, _Length} ->
+                    binary:part(
+                        Path,
+                        byte_size(PrefixWithSlash),
+                        byte_size(Path) - byte_size(PrefixWithSlash)
+                    );
+                nomatch ->
+                    Path
+            end
+    end.
+
+-spec join_csv_license_files([binary()]) -> binary().
+join_csv_license_files([]) ->
+    <<>>;
+join_csv_license_files(Files) ->
+    unicode:characters_to_binary(string:join([binary_to_list(File) || File <- Files], " ")).
+
+-spec render_csv_row([binary()]) -> iodata().
+render_csv_row(Fields) ->
+    Escaped = [quote_csv_field(Field) || Field <- Fields],
+    [lists:join(<<",">>, Escaped), <<"\n">>].
+
+-spec quote_csv_field(binary()) -> binary().
+quote_csv_field(Field) ->
+    Escaped = binary:replace(Field, <<"\"">>, <<"\"\"">>, [global]),
+    <<"\"", Escaped/binary, "\"">>.
+
+-spec write_readme(smelterl:file_path(), [legal_input()], boolean()) ->
+    ok | {error, term()}.
+write_readme(Path, Inputs, IncludeSources) ->
+    Sections = [
+        #{
+            title => maps:get(label, Input),
+            content => ensure_trailing_newline(maps:get(readme, Input))
+        }
+     || Input <- Inputs
+    ],
+    Data = #{
+        has_buildroot_sections => Sections =/= [],
+        no_buildroot_sections => Sections =:= [],
+        buildroot_sections => Sections,
+        include_sources => IncludeSources
+    },
+    smelterl_template:render_to_file(legal_readme, Data, Path).
+
+-spec ensure_trailing_newline(binary()) -> binary().
+ensure_trailing_newline(<<>>) ->
+    <<"\n">>;
+ensure_trailing_newline(Value) ->
+    case binary:last(Value) of
+        $\n ->
+            Value;
+        _ ->
+            <<Value/binary, "\n">>
+    end.
+
+-spec write_sha256(smelterl:file_path()) -> ok | {error, term()}.
+write_sha256(ExportDir) ->
+    Files = export_files(ExportDir),
+    Lines = [
+        sha256_line(ExportDir, RelativePath)
+     || RelativePath <- Files
+    ],
+    smelterl_file:write_iodata(
+        filename:join(binary_to_list(ExportDir), "legal-info.sha256"),
+        Lines
+    ).
+
+-spec export_files(smelterl:file_path()) -> [smelterl:file_path()].
+export_files(ExportDir) ->
+    lists:sort([
+        smelterl_file:relativize(Path, ExportDir)
+     || Path <- filelib:fold_files(
+            binary_to_list(ExportDir),
+            ".*",
+            true,
+            fun(FilePath, Acc) -> [path_to_binary(FilePath) | Acc] end,
+            []
+        ),
+        smelterl_file:relativize(Path, ExportDir) =/= <<"legal-info.sha256">>
+    ]).
+
+-spec sha256_line(smelterl:file_path(), smelterl:file_path()) -> iodata().
+sha256_line(ExportDir, RelativePath) ->
+    AbsolutePath = join_os_path(ExportDir, RelativePath),
+    {ok, Content} = file:read_file(binary_to_list(AbsolutePath)),
+    HexDigest = binary_to_hex(crypto:hash(sha256, Content)),
+    [HexDigest, <<"  ">>, RelativePath, <<"\n">>].
+
+-spec binary_to_hex(binary()) -> binary().
+binary_to_hex(Binary) ->
+    unicode:characters_to_binary(
+        lists:flatten([
+            io_lib:format("~2.16.0b", [Byte])
+         || <<Byte>> <= Binary
+        ])
+    ).
 
 -spec parse_manifest(smelterl:file_path(), binary(), target | host) ->
     {ok, [smelterl:br_package_entry()]} | {error, term()}.
@@ -526,6 +1139,12 @@ parent_legal_path(ManifestPath) ->
 -spec absolute_binary_path(smelterl:file_path()) -> smelterl:file_path().
 absolute_binary_path(Path) ->
     unicode:characters_to_binary(filename:absname(binary_to_list(Path))).
+
+-spec path_to_binary(smelterl:file_path() | string()) -> smelterl:file_path().
+path_to_binary(Path) when is_binary(Path) ->
+    Path;
+path_to_binary(Path) ->
+    unicode:characters_to_binary(Path).
 
 -spec join_relative_path(smelterl:file_path(), smelterl:file_path()) ->
     smelterl:file_path().

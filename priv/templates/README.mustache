@@ -1,0 +1,23 @@
+Grisp Alloy legal-info export (multi-target, merged)
+
+{{#has_buildroot_sections}}
+This directory contains one merged legal-info dataset built from all requested
+Buildroot target inputs. Package and license files are merged and deduplicated
+in this tree, while the original README text is preserved per input below.
+{{/has_buildroot_sections}}
+{{#no_buildroot_sections}}
+This directory does not currently contain any merged Buildroot legal-info
+inputs.
+{{/no_buildroot_sections}}
+
+{{#buildroot_sections}}
+--- From Buildroot ({{title}}) ---
+
+{{{content}}}
+{{/buildroot_sections}}
+Merged files in this export:
+- `manifest.csv` and `host-manifest.csv` when Buildroot inputs were provided
+- `licenses/` and `host-licenses/`
+{{#include_sources}}- `sources/` and `host-sources/` when Buildroot saved them
+{{/include_sources}}- `buildroot.config` copied from the main input when available
+- `legal-info.sha256` with checksums for exported files

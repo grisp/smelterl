@@ -791,6 +791,7 @@ Export produces one merged legal-info tree. Behavior depends on whether parsed B
    - **final path concretization:** evaluate variable references in the raw result against the smelterl runtime environment to obtain a concrete filesystem path required for copy/archive operations.
 7. Generate merged `legal-info/README` from the legal README template:
    - include Buildroot README content when Buildroot inputs were provided, preserving each input README block as-is (main and auxiliaries) in deterministic target order,
+   - derive README section titles from the standard target-workspace path shape `targets/<TARGET_ID>/workspace/legal-info` when available (`main` or `auxiliary: <TARGET_ID>`); if a path does not match that shape, keep deterministic CLI order and fall back to `input N`,
    - do not drop per-target Buildroot warnings; warnings from each input README remain visible in the merged top-level README under that target's section,
    - include alloy-specific section describing `alloy-manifest.csv`, `alloy-licenses/`, and optional `alloy-sources/`,
    - describe that the export is a single merged tree (main + auxiliaries), without per-target legal subtrees.
@@ -2174,32 +2175,36 @@ Parse target Buildroot legal-info and export one merged multi-target legal tree.
     - **`{invalid_path, Path, Posix}`** - Path does not exist, is not a directory, or not readable.
     - **`{missing_manifest, Path, Detail}`** - manifest.csv (or host-manifest.csv) missing, unreadable, or malformed.
 
-- **`export_legal/6`**:
+- **`export_legal/3`**:
 
-    Export the full legal-info tree in one call. Takes **BuildrootLegal** :: `smelterl:br_legal_info() | undefined` (handler passes result of parse_legal or undefined). When **undefined**: skip Buildroot copy, export only alloy legal info (alloy-manifest.csv, alloy-licenses/, optionally alloy-sources/, README, legal-info.sha256). When BuildrootLegal is given: copy from BuildrootLegal.path, then write the same alloy artefacts. Returns {ok, BuildrootLegal} (pass-through for §4.14).
+    Export the merged Buildroot legal-info tree in one call. The function parses
+    each input path with `parse_legal/1`, preserves each input README block, merges
+    deterministic `manifest.csv` / `host-manifest.csv` content plus copied
+    `licenses/` / `host-licenses/` trees, optionally copies `sources/` /
+    `host-sources/`, writes one top-level README via the template path, and
+    finishes with `legal-info.sha256`.
 
     **Processes:** §4.13 Collecting Legal Info and Export.
 
     ```erlang
-    -spec export_legal(ExportDir, TopOrder, Motherlode, Config, BuildrootLegal, IncludeSources) -> Result
-        when ExportDir      :: smelterl:file_path(),
-             TopOrder       :: smelterl:nugget_topology_order(),
-             Motherlode     :: smelterl:motherlode(),
-             Config         :: smelterl:config(),
-             BuildrootLegal :: smelterl:br_legal_info() | undefined,
+    -spec export_legal(BuildrootPaths, ExportDir, IncludeSources) -> Result
+        when BuildrootPaths :: [smelterl:file_path()],
+             ExportDir      :: smelterl:file_path(),
              IncludeSources :: boolean(),
-             Result         :: {ok, smelterl:br_legal_info() | undefined} | {error, Reason :: term()}.
+             Result         :: ok | {error, Reason :: term()}.
     ```
 
     **Error reasons:**
+    - **`{export_exists, Path}`** - Export directory already exists.
     - **`{dir_error, Path, Posix}`** - Could not create export directory.
     - **`{copy_failed, Source, Dest, Detail}`** - Copy of legal-info file or tree failed.
-    - **`{script_failed, Reason}`** - smelterl_script (exec or resolve) failed during alloy-sources export. `Reason` is from smelterl_script.
+    - **`{conflicting_buildroot_versions, Versions}`** - Repeated legal trees reported different Buildroot versions.
+    - **`{conflicting_package_entry, Field, Name, Version, Existing, Incoming}`** - The same package key appeared with incompatible merged metadata.
 
 **Testing highlights:**
 - **README (template):** (1) Test render parameters: mock smelterl_template and assert template key and data for the README. (2) When possible: use a custom template in the test context and assert on the rendered README output.
-- Use fixture buildroot_legal dir (manifest.csv, host-manifest.csv) and optionally export_legal to a tmp dir; mock smelterl_script for exec/resolve if testing alloy-sources; assert parsed package list, Buildroot version, and on-disk layout (alloy-manifest.csv, alloy-licenses/, README).
-- Helper: minimal legal-info tree; assert parsing and that export copies and relativizes paths correctly.
+- Use fixture buildroot_legal dirs (main + auxiliary) and export to a tmp dir; assert merged manifest rows, README block order/titles, copied license/source trees, and `buildroot.config` selection.
+- Helper: minimal legal-info tree; assert parsing, deduplicated merge behavior, and that exported paths stay deterministic.
 
 #### 5.7.22 smelterl_gen_manifest
 

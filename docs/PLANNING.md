@@ -329,7 +329,7 @@ Backlog/process note:
   - Tests: Unit tests for parse failures and package extraction.
   - Done when: Parsed legal structure is reusable for merge/export.
 
-- [ ] **Task 4.8: `smelterl_legal` merge/export multi-target legal trees**
+- [x] **Task 4.8: `smelterl_legal` merge/export multi-target legal trees**
   - Scope: Merge main+aux legal data and emit one legal-info export.
   - Tests: Golden export tree test including merged README blocks.
   - Refinement note (from Task 4.7): Consume `smelterl_legal:parse_legal/1`
@@ -342,6 +342,11 @@ Backlog/process note:
 - [ ] **Task 4.9: `smelterl_gen_manifest` generate-stage finalize**
   - Scope: Finalize manifest from seed (runtime fields, legal sections, integrity).
   - Tests: Golden manifest test with and without Buildroot legal data.
+  - Refinement note (from Task 4.8): Reuse the merged Buildroot legal package
+    data emitted by `smelterl_legal` instead of reparsing exported
+    `manifest.csv` files; the legal exporter already reconstructs deterministic
+    target and host manifests, preserves per-input README ordering, and
+    normalizes the special `buildroot` row through `br_version`.
   - Done when:
     - `capabilities` is firmware-only.
     - `sdk_outputs` is a separate top-level section.

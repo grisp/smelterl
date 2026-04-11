@@ -8,6 +8,11 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added merged Buildroot legal export support to `smelterl_legal`, including
+  deterministic multi-input `manifest.csv` / `host-manifest.csv` generation,
+  merged license/source tree copying, README rendering via a new
+  `priv/templates/README.mustache` template, checksum emission, and focused
+  Common Test coverage for preserved main/auxiliary README blocks.
 - Added `smelterl_legal`, shared `br_legal_info` / `br_package_entry` types,
   and focused Common Test coverage so Smelterl can parse one Buildroot
   `legal-info/` tree into reusable target-package, host-package, and
@@ -97,6 +102,11 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl generate` so `--export-legal` now emits one merged
+  legal-info directory rooted relative to `--output-manifest`, using repeated
+  `--buildroot-legal` inputs in CLI order and inferring `main` /
+  `auxiliary:<id>` README section labels from the standard target-workspace
+  path when available.
 - Tightened the shared workflow guidance so task history files omit routine
   successful validation-command lists unless a validation result adds durable
   task-specific insight beyond the expected workflow.
