@@ -31,13 +31,12 @@ Build `Config.in` content for one selected target.
 generate(Topology, Motherlode, ExtraConfigKeys) ->
     maybe
         {ok, NormalizedExtraConfigKeys} ?= normalize_extra_config_keys(ExtraConfigKeys),
-        {ok, SourceGroups} ?= collect_source_groups(Topology, Motherlode),
+        {ok, Packages} ?= collect_packages(Topology, Motherlode),
         smelterl_template:render(
             config_in,
             #{
-                extra_config_blocks =>
-                    render_extra_config_blocks(NormalizedExtraConfigKeys),
-                source_blocks => render_source_groups(SourceGroups)
+                extra_config => extra_config_template_data(NormalizedExtraConfigKeys),
+                packages => Packages
             }
         )
     else
@@ -78,12 +77,12 @@ normalize_extra_config_keys(Keys) when is_list(Keys) ->
 normalize_extra_config_keys(Keys) ->
     {error, {invalid_extra_config_keys, Keys}}.
 
-collect_source_groups(Topology, Motherlode) ->
-    collect_source_groups(Topology, Motherlode, []).
+collect_packages(Topology, Motherlode) ->
+    collect_packages(Topology, Motherlode, []).
 
-collect_source_groups([], _Motherlode, Acc) ->
+collect_packages([], _Motherlode, Acc) ->
     {ok, lists:reverse(Acc)};
-collect_source_groups([NuggetId | Rest], Motherlode, Acc0) ->
+collect_packages([NuggetId | Rest], Motherlode, Acc0) ->
     maybe
         {ok, Nugget} ?= lookup_nugget(NuggetId, Motherlode),
         {ok, Sources} ?= nugget_sources(NuggetId, Nugget),
@@ -92,9 +91,9 @@ collect_source_groups([NuggetId | Rest], Motherlode, Acc0) ->
                 [] ->
                     Acc0;
                 _ ->
-                    [{source_group_comment(NuggetId, Nugget), Sources} | Acc0]
+                    [package_template_data(NuggetId, Nugget, Sources) | Acc0]
             end,
-        collect_source_groups(Rest, Motherlode, Acc1)
+        collect_packages(Rest, Motherlode, Acc1)
     else
         {error, _} = Error ->
             Error
@@ -243,14 +242,15 @@ nugget_dir(Nugget) ->
             smelterl_file:resolve_path(NuggetRelPath, RepoPath)
     end.
 
-source_group_comment(NuggetId, Nugget) ->
-    NuggetIdBin = atom_to_binary(NuggetId, utf8),
-    case description_text(Nugget) of
-        <<>> ->
-            <<"# ", NuggetIdBin/binary, "\n">>;
-        Description ->
-            <<"# ", NuggetIdBin/binary, ": ", Description/binary, "\n">>
-    end.
+package_template_data(NuggetId, Nugget, Sources) ->
+    #{
+        name => atom_to_binary(NuggetId, utf8),
+        description => description_text(Nugget),
+        sources => [
+            #{path => SourcePath}
+         || SourcePath <- Sources
+        ]
+    }.
 
 description_text(Nugget) ->
     case maps:get(description, Nugget, undefined) of
@@ -265,56 +265,11 @@ description_text(Nugget) ->
             end
     end.
 
-render_extra_config_blocks(Keys) ->
-    lists:map(
-        fun(Key) ->
-            [
-                <<"config ", Key/binary, "\n">>,
-                <<"\tstring\n">>,
-                <<"\toption env=\"", Key/binary, "\"\n\n">>
-            ]
-        end,
-        Keys
-    ).
-
-render_source_groups(SourceGroups) ->
-    render_source_groups(SourceGroups, []).
-
-render_source_groups([], Acc) ->
-    lists:reverse(Acc);
-render_source_groups([{Comment, Sources}], Acc) ->
-    render_source_groups(
-        [],
-        [
-            [
-                Comment,
-                lists:map(
-                    fun(Source) ->
-                        <<"source \"", Source/binary, "\"\n">>
-                    end,
-                    Sources
-                )
-            ]
-         | Acc
-        ]
-    );
-render_source_groups([{Comment, Sources} | Rest], Acc) ->
-    render_source_groups(
-        Rest,
-        [
-            [
-                Comment,
-                lists:map(
-                    fun(Source) ->
-                        <<"source \"", Source/binary, "\"\n">>
-                    end,
-                    Sources
-                ),
-                <<"\n">>
-            ]
-         | Acc
-        ]
-    ).
+extra_config_template_data(Keys) ->
+    [
+        #{key => Key}
+     || Key <- Keys
+    ].
 
 maybe_cons(undefined, List) ->
     List;

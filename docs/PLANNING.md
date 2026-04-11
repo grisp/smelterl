@@ -245,7 +245,7 @@ Status convention:
     deterministic (alphabetical within each nugget).
   - Done when: Include order and content are deterministic.
 
-- [ ] **Task 4.4a: `smelterl_gen_config_in` template-owned formatting refactor**
+- [x] **Task 4.4a: `smelterl_gen_config_in` template-owned formatting refactor**
   - Scope: Replace the current pre-rendered `extra_config_blocks` and
     `source_blocks` strings with structured template data so `Config.in`
     comments, blank lines, `config`, and `source` line layout live in the

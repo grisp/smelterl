@@ -2,6 +2,17 @@
 
 ## Extra Buildroot Environment ##
 
-{{extra_config_blocks}}## Nugget Packages ##
+{{#extra_config}}
+config {{{key}}}
+	string
+	option env="{{{key}}}"
 
-{{source_blocks}}
+{{/extra_config}}## Nugget Packages ##
+
+{{#packages}}
+# {{{name}}}{{#description}}: {{{.}}}{{/description}}
+{{#sources}}
+source "{{{path}}}"
+{{/sources}}
+
+{{/packages}}

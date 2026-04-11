@@ -88,6 +88,12 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl_gen_config_in` and `priv/templates/Config.in.mustache`
+  so `Config.in` formatting is now template-owned: the generator passes
+  structured extra-config and package/source data into the shared Mustache
+  renderer instead of assembling preformatted `config` and `source` text
+  blocks in Erlang, with focused Common Test coverage for the comment-layout
+  edge case where a nugget description is empty.
 - Replaced the hand-written first-draft `priv/defconfig-keys.spec` contents
   with a generated Buildroot 2025.05 index that records the Buildroot
   version/revision and regeneration command while avoiding host-specific
