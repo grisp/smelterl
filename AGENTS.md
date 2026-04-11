@@ -29,6 +29,9 @@ Working model:
   history, changelog, and commit-message rules still apply here, but the agent
   must explicitly call out any later `grisp_alloy` follow-up that would be
   required to synchronize the larger system.
+- when durable human or agent feedback improves the process, codify that
+  improvement in the owning repository workflow/agent/planning docs instead of
+  leaving it only in chat or task-local memory.
 
 Rules:
 

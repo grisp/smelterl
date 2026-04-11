@@ -32,6 +32,11 @@ Status convention:
 - IN_PROGRESS: `- [ ] **[IN_PROGRESS] Task ...**`
 - DONE: `- [x] **Task ...**`
 
+Backlog/process note:
+- If feedback reveals a durable workflow/process improvement, record it in the
+  owning repository workflow/agent/planning docs instead of relying on
+  conversational memory.
+
 ## Phase 1: Smelterl Plan Pipeline (original Alloy Phase 3)
 
 
@@ -271,7 +276,7 @@ Status convention:
   - Done when: `smelterl_gen_external_desc` provides structured fields only and
     the template defines the emitted text format.
 
-- [ ] **Task 4.5: `smelterl_gen_defconfig` generate-stage render**
+- [x] **Task 4.5: `smelterl_gen_defconfig` generate-stage render**
   - Scope: Render selected target defconfig from plan model.
   - Tests: Golden output test.
   - Refinement note (from Task 3.9): Consume the precomputed

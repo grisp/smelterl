@@ -92,6 +92,7 @@ run_generate(Opts) ->
         ok ?= maybe_write_external_desc(Opts, Plan, Target),
         ok ?= maybe_write_config_in(Opts, Plan, Target),
         ok ?= maybe_write_external_mk(Opts, Target),
+        ok ?= maybe_write_defconfig(Opts, Target),
         0
     else
         {plan_error, Reason} ->
@@ -268,6 +269,16 @@ maybe_write_external_mk(Opts, Target) ->
             write_external_mk(Path, Target)
     end.
 
+maybe_write_defconfig(Opts, Target) ->
+    case maps:get(output_defconfig, Opts, undefined) of
+        undefined ->
+            ok;
+        [] ->
+            ok;
+        Path ->
+            write_defconfig(Path, Target)
+    end.
+
 write_external_desc(Path, ProductId, Target) ->
     Motherlode = maps:get(motherlode, Target, #{}),
     case with_output_device(Path, fun(Device) ->
@@ -313,6 +324,19 @@ write_external_mk(Path, Target) ->
             {generate_error, {external_mk_open_failed, OutputPath, Posix}};
         {error, Reason} ->
             {generate_error, {external_mk_failed, Reason}}
+    end.
+
+write_defconfig(Path, Target) ->
+    DefconfigModel = maps:get(defconfig, Target, #{}),
+    case with_output_device(Path, fun(Device) ->
+        smelterl_gen_defconfig:render(DefconfigModel, Device)
+    end) of
+        ok ->
+            ok;
+        {error, {open_failed, OutputPath, Posix}} ->
+            {generate_error, {defconfig_open_failed, OutputPath, Posix}};
+        {error, Reason} ->
+            {generate_error, {defconfig_failed, Reason}}
     end.
 
 with_output_device("-", Fun) ->
@@ -442,6 +466,26 @@ format_generate_error({external_mk_failed, {write_failed, _PathOrDevice, Detail}
 format_generate_error({external_mk_failed, Reason}) ->
     io_lib:format(
         "generate: external.mk generation failed: ~tp",
+        [Reason]
+    );
+format_generate_error({defconfig_open_failed, Path, Posix}) ->
+    io_lib:format(
+        "generate: failed to open defconfig output '~ts': ~ts",
+        [Path, file:format_error(Posix)]
+    );
+format_generate_error({defconfig_failed, {render_failed, defconfig, Detail}}) ->
+    io_lib:format(
+        "generate: failed to render defconfig: ~tp",
+        [Detail]
+    );
+format_generate_error({defconfig_failed, {write_failed, _PathOrDevice, Detail}}) ->
+    io_lib:format(
+        "generate: failed to write defconfig: ~tp",
+        [Detail]
+    );
+format_generate_error({defconfig_failed, Reason}) ->
+    io_lib:format(
+        "generate: defconfig generation failed: ~tp",
         [Reason]
     ).
 

@@ -16,6 +16,8 @@ appends the deterministic target-local Buildroot wrapper hooks.
 %=== EXPORTS ===================================================================
 
 -export([build_model/5]).
+-export([render/1]).
+-export([render/2]).
 
 
 %=== TYPES =====================================================================
@@ -66,6 +68,41 @@ build_model(TargetId, Topology, Motherlode, Config, ProductId) ->
         ),
         {ok, State2} ?= inject_target_wrappers(TargetId, State1),
         {ok, final_model(State2)}
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-doc """
+Render one precomputed defconfig model to iodata.
+""".
+-spec render(smelterl:defconfig_model()) ->
+    {ok, iodata()} | {error, term()}.
+render(DefconfigModel) when is_map(DefconfigModel) ->
+    RegularEntries = maps:get(regular, DefconfigModel, []),
+    CumulativeEntries = maps:get(cumulative, DefconfigModel, []),
+    smelterl_template:render(
+        defconfig,
+        #{
+            regular => entry_template_data(RegularEntries),
+            cumulative => entry_template_data(CumulativeEntries),
+            has_regular => RegularEntries =/= [],
+            has_cumulative => CumulativeEntries =/= [],
+            has_both => RegularEntries =/= [] andalso CumulativeEntries =/= []
+        }
+    );
+render(DefconfigModel) ->
+    {error, {invalid_defconfig_model, DefconfigModel}}.
+
+-doc """
+Render one precomputed defconfig model and write it to one open IO device.
+""".
+-spec render(smelterl:defconfig_model(), file:io_device()) ->
+    ok | {error, term()}.
+render(DefconfigModel, Out) ->
+    maybe
+        {ok, Content} ?= render(DefconfigModel),
+        smelterl_file:write_iodata(Out, Content)
     else
         {error, _} = Error ->
             Error
@@ -559,6 +596,12 @@ ordered_cumulative_entries(EntryMap) ->
 quote_join(Values) ->
     Joined = binary:join(Values, <<" ">>),
     <<<<"\"">>/binary, Joined/binary, <<"\"">>/binary>>.
+
+entry_template_data(Entries) ->
+    [
+        #{key => Key, value => Value}
+     || {Key, Value} <- Entries
+    ].
 
 substitution_values(TargetId, ProductId, Motherlode, Config) ->
     Product = lookup_nugget(ProductId, Motherlode),

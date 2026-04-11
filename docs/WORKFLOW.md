@@ -12,14 +12,22 @@ Primary development model:
 
 When working from a `grisp_alloy` superproject checkout:
 - track Smelterl-owned work in `smelterl/docs/PLANNING.md`,
-- write history in `smelterl/history/`,
+- write history in `smelterl/history/`, following the shared rule that
+  history files record only durable, future-useful task context and not normal
+  process confirmations or local session-state reminders,
+- codify durable workflow/process improvements in the owning repository docs
+  rather than leaving them only in conversational feedback,
 - update `smelterl/CHANGELOG.md`,
 - prepare the Smelterl commit message via the Smelterl repository git dir
   (for example from the superproject root:
   `git -C smelterl rev-parse --git-dir`),
 - commit Smelterl changes in the `smelterl/` repository first,
-- then complete the linked `grisp_alloy` follow-up task that records the new
-  submodule commit and any Alloy-side updates.
+- create or move a `grisp_alloy` follow-up task to `[IN_PROGRESS]` only when
+  the superproject is actually being changed:
+  - immediately, when Alloy-side code/docs/tests also change as part of the
+    same overall feature/fix,
+  - later, when development returns to `grisp_alloy` and a batched submodule
+    sync commit is being prepared.
 
 When working from a standalone `smelterl` checkout:
 - follow the same Smelterl-local planning/history/changelog/commit rules,
@@ -28,6 +36,9 @@ When working from a standalone `smelterl` checkout:
   update, or orchestration change, record that downstream follow-up explicitly
   in planning/history/completion reporting instead of implying the overall
   cross-repository job is already complete.
+- that downstream follow-up does not require an immediate `grisp_alloy`
+  planning task if the superproject will be synchronized later in one batched
+  commit.
 
 Use one of these:
 

@@ -88,6 +88,11 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl_gen_defconfig`, `smelterl_cmd_generate`, and the shared
+  template registry so `smelterl generate --output-defconfig` now renders the
+  precomputed plan-stage defconfig model through a dedicated
+  `priv/templates/defconfig.mustache` template instead of leaving defconfig
+  output unwired at generate time.
 - Updated `smelterl_gen_external_desc` and
   `priv/templates/external.desc.mustache` so `external.desc` formatting is now
   template-owned: Erlang still normalizes the Buildroot external name, but the

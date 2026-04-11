@@ -131,6 +131,10 @@ template_filename(external_mk) ->
     "external.mk.mustache";
 template_filename(<<"external_mk">>) ->
     "external.mk.mustache";
+template_filename(defconfig) ->
+    "defconfig.mustache";
+template_filename(<<"defconfig">>) ->
+    "defconfig.mustache";
 template_filename(_TemplateKey) ->
     undefined.
 
