@@ -324,7 +324,7 @@ Backlog/process note:
     - Auxiliary context omits firmware/embed/fs-priority control arrays.
     - Main context includes firmware arrays and sdk-output consumption support.
 
-- [ ] **Task 4.7: `smelterl_legal` parse single legal tree**
+- [x] **Task 4.7: `smelterl_legal` parse single legal tree**
   - Scope: Parse one Buildroot legal-info input.
   - Tests: Unit tests for parse failures and package extraction.
   - Done when: Parsed legal structure is reusable for merge/export.
@@ -332,6 +332,11 @@ Backlog/process note:
 - [ ] **Task 4.8: `smelterl_legal` merge/export multi-target legal trees**
   - Scope: Merge main+aux legal data and emit one legal-info export.
   - Tests: Golden export tree test including merged README blocks.
+  - Refinement note (from Task 4.7): Consume `smelterl_legal:parse_legal/1`
+    as the source of truth for Buildroot package lists; the special
+    `buildroot` host-manifest row is already folded into `br_version` and
+    excluded from `host_packages`, and the parser is header-driven so merge
+    logic should rely on required column names rather than fixed CSV ordering.
   - Done when: Final export has one merged tree with preserved target README content.
 
 - [ ] **Task 4.9: `smelterl_gen_manifest` generate-stage finalize**

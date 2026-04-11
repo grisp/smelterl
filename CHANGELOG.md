@@ -8,6 +8,10 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added `smelterl_legal`, shared `br_legal_info` / `br_package_entry` types,
+  and focused Common Test coverage so Smelterl can parse one Buildroot
+  `legal-info/` tree into reusable target-package, host-package, and
+  Buildroot-version data for later legal merge/export and manifest work.
 - Added `smelterl_gen_context`,
   `priv/templates/alloy_context.sh.mustache`, and focused Common Test coverage
   so generate-stage rendering can emit target-scoped `alloy_context.sh` files
@@ -96,6 +100,12 @@ and this project adheres to Semantic Versioning.
 - Tightened the shared workflow guidance so task history files omit routine
   successful validation-command lists unless a validation result adds durable
   task-specific insight beyond the expected workflow.
+- Updated `smelterl_legal` and its focused Common Test coverage to match real
+  Buildroot `legal-info` exports: empty synthetic host-package versions are
+  accepted, bare quotes inside quoted license fields are parsed permissively,
+  and `license_files` are resolved to paths relative to the `legal-info/`
+  root (including Buildroot's `buildroot`, `go-src`, and `go-bin` host-package
+  directory naming quirks).
 - Extended `smelterl_cmd_generate_SUITE` so generated `alloy_context.sh`
   output is validated with `bash -n`, sourced in bash under a controlled
   environment, and lint-checked with `shellcheck -s bash` (excluding the

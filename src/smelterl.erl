@@ -41,7 +41,9 @@ delegates argument handling to `smelterl_cli`.
     firmware_output_spec/0,
     firmware_parameter_spec/0,
     sdk_output_spec/0,
-    firmware_capabilities/0
+    firmware_capabilities/0,
+    br_package_entry/0,
+    br_legal_info/0
 ]).
 
 
@@ -220,6 +222,22 @@ and the version string is shown by `--version`.
     selectable_outputs := [firmware_output_spec()],
     firmware_parameters := [firmware_parameter_spec()],
     sdk_outputs_by_target := #{target_id() => [sdk_output_spec()]}
+}.
+
+-doc "One parsed Buildroot legal-info package row.".
+-type br_package_entry() :: #{
+    name := binary(),
+    version := binary(),
+    license := binary(),
+    license_files := [file_path()]
+}.
+
+-doc "Parsed Buildroot legal-info payload for one target-local legal-info tree.".
+-type br_legal_info() :: #{
+    path := file_path(),
+    br_version := binary(),
+    packages := [br_package_entry()],
+    host_packages := [br_package_entry()]
 }.
 
 
