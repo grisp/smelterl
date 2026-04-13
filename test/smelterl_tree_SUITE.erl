@@ -98,7 +98,14 @@ build_targets_discovers_auxiliaries_and_merges_backbone(_Config) ->
         maps:get(aux_root, maps:get(edges, maps:get(specific_tree, AuxMain)))
     ),
     assert_equal(
-        [aux_feature, shared_dep],
+        [
+            aux_feature,
+            shared_dep,
+            builder_core,
+            toolchain_core,
+            platform_core,
+            system_core
+        ],
         maps:get(aux_root, maps:get(edges, maps:get(tree, AuxMain)))
     ),
     assert_equal(
@@ -109,6 +116,10 @@ build_targets_discovers_auxiliaries_and_merges_backbone(_Config) ->
     assert_equal([], maps:get(platform_core, maps:get(edges, maps:get(tree, AuxMain)))),
     assert_equal([], maps:get(system_core, maps:get(edges, maps:get(tree, AuxMain)))),
     assert_equal(aux_secondary_root, maps:get(root, maps:get(tree, AuxSecondary))),
+    assert_equal(
+        [builder_core, toolchain_core, platform_core, system_core],
+        maps:get(aux_secondary_root, maps:get(edges, maps:get(tree, AuxSecondary)))
+    ),
     assert_equal(
         [
             aux_secondary_root,

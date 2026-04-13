@@ -373,9 +373,9 @@ merge_extra_config_into_target_configs(TargetConfigs, ExtraConfig) ->
 
 build_defconfig_models(Targets, TopologyOrders, TargetMotherlodes, TargetConfigs) ->
     MainTree = maps:get(main, Targets),
-    MainSpec = {main, maps:get(root, MainTree)},
+    MainSpec = {main, maps:get(root, MainTree), MainTree},
     AuxiliarySpecs = [
-        {maps:get(id, Auxiliary), maps:get(root_nugget, Auxiliary)}
+        {maps:get(id, Auxiliary), maps:get(root_nugget, Auxiliary), maps:get(tree, Auxiliary)}
      || Auxiliary <- maps:get(auxiliaries, Targets, [])
     ],
     build_defconfig_models(
@@ -395,7 +395,7 @@ build_defconfig_models(
 ) ->
     {ok, Acc};
 build_defconfig_models(
-    [{TargetId, ProductId} | Rest],
+    [{TargetId, ProductId, Tree} | Rest],
     TopologyOrders,
     TargetMotherlodes,
     TargetConfigs,
@@ -406,7 +406,8 @@ build_defconfig_models(
         maps:get(TargetId, TopologyOrders),
         maps:get(TargetId, TargetMotherlodes),
         maps:get(TargetId, TargetConfigs),
-        ProductId
+        ProductId,
+        Tree
     ) of
         {ok, Model} ->
             build_defconfig_models(

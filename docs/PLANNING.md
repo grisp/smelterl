@@ -351,7 +351,7 @@ Backlog/process note:
     - `capabilities` is firmware-only.
     - `sdk_outputs` is a separate top-level section.
 
-- [ ] **Task 4.10: Plan/generate integration regression tests**
+- [x] **Task 4.10: Plan/generate integration regression tests**
   - Scope: End-to-end smelterl tests for one main + one auxiliary sample.
   - Tests: Integration tests asserting no dependency resolution in generate.
   - Refinement note (from Task 4.9): End-to-end generate fixtures that request
