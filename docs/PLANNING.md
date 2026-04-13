@@ -339,7 +339,7 @@ Backlog/process note:
     logic should rely on required column names rather than fixed CSV ordering.
   - Done when: Final export has one merged tree with preserved target README content.
 
-- [ ] **Task 4.9: `smelterl_gen_manifest` generate-stage finalize**
+- [x] **Task 4.9: `smelterl_gen_manifest` generate-stage finalize**
   - Scope: Finalize manifest from seed (runtime fields, legal sections, integrity).
   - Tests: Golden manifest test with and without Buildroot legal data.
   - Refinement note (from Task 4.8): Reuse the merged Buildroot legal package
@@ -354,6 +354,10 @@ Backlog/process note:
 - [ ] **Task 4.10: Plan/generate integration regression tests**
   - Scope: End-to-end smelterl tests for one main + one auxiliary sample.
   - Tests: Integration tests asserting no dependency resolution in generate.
+  - Refinement note (from Task 4.9): End-to-end generate fixtures that request
+    `--output-manifest` must carry a valid plan-stage `manifest_seed`; the
+    generate path now validates and finalizes that seed instead of tolerating
+    placeholder manifest metadata.
   - Refinement note (from Task 4.6): Static `alloy_context.sh` generation can
     emit declared `sdk_outputs` metadata and helper lookups, but the
     main-context `ALLOY_SDK_OUTPUT_<AUX_ID>_<OUTPUT_ID>` path variables remain

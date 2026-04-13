@@ -8,6 +8,13 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added generate-stage manifest finalization to `smelterl_gen_manifest`,
+  including runtime build-environment fields, relocatable path rewriting,
+  optional Buildroot package sections, integrity hashing, and focused Common
+  Test coverage for finalize behavior with and without Buildroot legal data.
+- Added `smelterl_legal:collect_legal/3` so generate-stage manifest
+  finalization and legal export can share one merged Buildroot legal-data path
+  without reparsing exported manifest files.
 - Added merged Buildroot legal export support to `smelterl_legal`, including
   deterministic multi-input `manifest.csv` / `host-manifest.csv` generation,
   merged license/source tree copying, README rendering via a new
@@ -102,6 +109,10 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl generate` so `--output-manifest` now writes a finalized
+  `ALLOY_SDK_MANIFEST` from the plan-carried seed, reusing merged Buildroot
+  legal data and anchoring package license paths to the exported legal tree
+  when `--export-legal` is used.
 - Updated `smelterl generate` so `--export-legal` now emits one merged
   legal-info directory rooted relative to `--output-manifest`, using repeated
   `--buildroot-legal` inputs in CLI order and inferring `main` /

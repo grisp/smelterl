@@ -2155,13 +2155,13 @@ Render target-scoped `alloy_context.sh` from template via smelterl_template (tem
 #### 5.7.21 smelterl_legal
 
 **Role:**
-Parse target Buildroot legal-info and export one merged multi-target legal tree. `parse_legal/1` parses one target legal directory. `export_legal/*` merges all selected targets into one top-level legal-info structure (no per-target subtree in final export) and generates merged README content. Alloy-only export mode remains valid when Buildroot legal input is not supplied.
+Parse target Buildroot legal-info and export one merged multi-target legal tree. `parse_legal/1` parses one target legal directory. `collect_legal/3` is the shared merge path used by generate-stage manifest finalization and optional export. `export_legal/*` is the export-only wrapper over that shared merge path. Alloy-only export mode remains valid when Buildroot legal input is not supplied.
 
 **Exported functions:**
 
 - **`parse_legal/1`**:
 
-    Parse Buildroot legal-info directory (manifest.csv, host-manifest.csv); return br_legal_info() with path, packages, host_packages, br_version. Use when the caller only needs parsed data (e.g. for manifest, without exporting).
+    Parse one Buildroot legal-info directory (manifest.csv, host-manifest.csv); return `br_legal_info()` with path, packages, host_packages, and `br_version`.
 
     **Processes:** §4.13 Collecting Legal Info and Export.
 
@@ -2175,14 +2175,39 @@ Parse target Buildroot legal-info and export one merged multi-target legal tree.
     - **`{invalid_path, Path, Posix}`** - Path does not exist, is not a directory, or not readable.
     - **`{missing_manifest, Path, Detail}`** - manifest.csv (or host-manifest.csv) missing, unreadable, or malformed.
 
+- **`collect_legal/3`**:
+
+    Merge one or more Buildroot legal-info inputs into a manifest-ready
+    `br_legal_info()` payload. When `ExportDir` is provided, the function writes
+    the merged legal export first and returns package/license paths anchored to
+    the exported tree. When `ExportDir` is `undefined`, it returns merged
+    package/license paths anchored to the original input legal-info trees.
+
+    **Processes:** §4.13 Collecting Legal Info and Export; §4.14 Generating Manifest.
+
+    ```erlang
+    -spec collect_legal(BuildrootPaths, ExportDir, IncludeSources) -> Result
+        when BuildrootPaths :: [smelterl:file_path()],
+             ExportDir      :: smelterl:file_path() | undefined,
+             IncludeSources :: boolean(),
+             Result         :: {ok, smelterl:br_legal_info()} | {error, Reason :: term()}.
+    ```
+
+    **Error reasons:**
+    - **`{export_exists, Path}`** - Export directory already exists.
+    - **`{dir_error, Path, Posix}`** - Could not create export directory.
+    - **`{copy_failed, Source, Dest, Detail}`** - Copy of legal-info file or tree failed.
+    - **`{conflicting_buildroot_versions, Versions}`** - Repeated legal trees reported different Buildroot versions.
+    - **`{conflicting_package_entry, Field, Name, Version, Existing, Incoming}`** - The same package key appeared with incompatible merged metadata.
+
 - **`export_legal/3`**:
 
-    Export the merged Buildroot legal-info tree in one call. The function parses
-    each input path with `parse_legal/1`, preserves each input README block, merges
-    deterministic `manifest.csv` / `host-manifest.csv` content plus copied
-    `licenses/` / `host-licenses/` trees, optionally copies `sources/` /
-    `host-sources/`, writes one top-level README via the template path, and
-    finishes with `legal-info.sha256`.
+    Export the merged Buildroot legal-info tree in one call. This is the
+    export-only wrapper around `collect_legal/3`: it preserves each input README
+    block, merges deterministic `manifest.csv` / `host-manifest.csv` content
+    plus copied `licenses/` / `host-licenses/` trees, optionally copies
+    `sources/` / `host-sources/`, writes one top-level README via the template
+    path, and finishes with `legal-info.sha256`.
 
     **Processes:** §4.13 Collecting Legal Info and Export.
 

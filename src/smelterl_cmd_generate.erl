@@ -5,10 +5,10 @@
 -moduledoc """
 `smelterl generate` command implementation.
 
-This initial generate-stage command handler owns CLI option parsing and
-selected-target validation. It loads one precomputed build plan, enforces the
-main-target-only option matrix, and resolves either the main or one auxiliary
-target without rerunning planning work.
+This generate-stage command handler owns CLI option parsing, selected-target
+validation, and target-scoped artefact writing from a precomputed build plan.
+For main-target generation it also finalizes the SDK manifest, optionally
+consuming merged Buildroot legal data and exporting the merged legal tree.
 """.
 
 -behaviour(smelterl_command).
@@ -94,7 +94,8 @@ run_generate(Opts) ->
         ok ?= maybe_write_external_mk(Opts, Target),
         ok ?= maybe_write_defconfig(Opts, Target),
         ok ?= maybe_write_context(Opts, Plan, Target),
-        ok ?= maybe_export_legal(Opts),
+        {ok, BuildrootLegal} ?= maybe_prepare_manifest_legal(Opts),
+        ok ?= maybe_write_manifest(Opts, Plan, BuildrootLegal),
         0
     else
         {plan_error, Reason} ->
@@ -291,14 +292,54 @@ maybe_write_context(Opts, Plan, Target) ->
             write_context(Path, Plan, Target)
     end.
 
-maybe_export_legal(Opts) ->
+maybe_prepare_manifest_legal(Opts) ->
+    BuildrootPaths = [
+        path_to_binary(Path)
+     || Path <- maps:get(buildroot_legal, Opts, [])
+    ],
     case maps:get(export_legal, Opts, undefined) of
+        undefined ->
+            collect_manifest_legal(BuildrootPaths, undefined, Opts);
+        [] ->
+            collect_manifest_legal(BuildrootPaths, undefined, Opts);
+        ExportLegalPath ->
+            collect_manifest_legal(
+                BuildrootPaths,
+                export_dir(Opts, ExportLegalPath),
+                Opts
+            )
+    end.
+
+collect_manifest_legal([], undefined, _Opts) ->
+    {ok, undefined};
+collect_manifest_legal([], _ExportDir, Opts) ->
+    case export_legal(Opts, maps:get(export_legal, Opts)) of
+        ok ->
+            {ok, undefined};
+        {generate_error, _} = Error ->
+            Error
+    end;
+collect_manifest_legal(BuildrootPaths, ExportDir, Opts) ->
+    IncludeSources = maps:get(include_sources, Opts, false),
+    case smelterl_legal:collect_legal(
+        BuildrootPaths,
+        ExportDir,
+        IncludeSources
+    ) of
+        {ok, LegalInfo} ->
+            {ok, LegalInfo};
+        {error, Reason} ->
+            {generate_error, {legal_collect_failed, Reason}}
+    end.
+
+maybe_write_manifest(Opts, Plan, BuildrootLegal) ->
+    case maps:get(output_manifest, Opts, undefined) of
         undefined ->
             ok;
         [] ->
             ok;
-        ExportLegalPath ->
-            export_legal(Opts, ExportLegalPath)
+        Path ->
+            write_manifest(Path, Plan, BuildrootLegal)
     end.
 
 write_external_desc(Path, ProductId, Target) ->
@@ -375,9 +416,7 @@ write_context(Path, Plan, Target) ->
     end.
 
 export_legal(Opts, ExportLegalPath) ->
-    ManifestPath = maps:get(output_manifest, Opts),
-    ExportRoot = filename:dirname(path_to_list(ManifestPath)),
-    ExportDir = smelterl_file:resolve_path(ExportLegalPath, ExportRoot),
+    ExportDir = export_dir(Opts, ExportLegalPath),
     BuildrootPaths = [
         path_to_binary(Path)
      || Path <- maps:get(buildroot_legal, Opts, [])
@@ -388,6 +427,37 @@ export_legal(Opts, ExportLegalPath) ->
             ok;
         {error, Reason} ->
             {generate_error, {legal_export_failed, Reason}}
+    end.
+
+export_dir(Opts, ExportLegalPath) ->
+    ManifestPath = maps:get(output_manifest, Opts),
+    ExportRoot = manifest_base_path(ManifestPath),
+    smelterl_file:resolve_path(ExportLegalPath, ExportRoot).
+
+write_manifest(Path, Plan, BuildrootLegal) ->
+    ManifestSeed = maps:get(manifest_seed, Plan),
+    BasePath = path_to_binary(manifest_base_path(Path)),
+    PathOrDevice =
+        case Path of
+            "-" ->
+                standard_io;
+            _ ->
+                Path
+        end,
+    case smelterl_gen_manifest:generate(
+        ManifestSeed,
+        BuildrootLegal,
+        BasePath,
+        PathOrDevice
+    ) of
+        ok ->
+            ok;
+        {error, {open_failed, OutputPath, Posix}} ->
+            {generate_error, {manifest_open_failed, OutputPath, Posix}};
+        {error, {write_failed, Reason}} ->
+            {generate_error, {manifest_write_failed, Reason}};
+        {error, Reason} ->
+            {generate_error, {manifest_failed, Reason}}
     end.
 
 with_output_device("-", Fun) ->
@@ -564,9 +634,34 @@ format_generate_error({legal_export_failed, {export_exists, Path}}) ->
         "generate: legal export directory already exists: ~ts",
         [Path]
     );
+format_generate_error({legal_collect_failed, {export_exists, Path}}) ->
+    io_lib:format(
+        "generate: legal export directory already exists: ~ts",
+        [Path]
+    );
+format_generate_error({legal_collect_failed, Reason}) ->
+    io_lib:format(
+        "generate: failed to collect Buildroot legal data: ~tp",
+        [Reason]
+    );
 format_generate_error({legal_export_failed, Reason}) ->
     io_lib:format(
         "generate: legal-info export failed: ~tp",
+        [Reason]
+    );
+format_generate_error({manifest_open_failed, Path, Posix}) ->
+    io_lib:format(
+        "generate: failed to open ALLOY_SDK_MANIFEST output '~ts': ~ts",
+        [Path, file:format_error(Posix)]
+    );
+format_generate_error({manifest_write_failed, Reason}) ->
+    io_lib:format(
+        "generate: failed to write ALLOY_SDK_MANIFEST: ~tp",
+        [Reason]
+    );
+format_generate_error({manifest_failed, Reason}) ->
+    io_lib:format(
+        "generate: ALLOY_SDK_MANIFEST generation failed: ~tp",
         [Reason]
     );
 format_generate_error({context_failed, Reason}) ->
@@ -574,6 +669,12 @@ format_generate_error({context_failed, Reason}) ->
         "generate: alloy_context.sh generation failed: ~tp",
         [Reason]
     ).
+
+manifest_base_path("-") ->
+    {ok, CurrentDir} = file:get_cwd(),
+    CurrentDir;
+manifest_base_path(Path) ->
+    filename:dirname(path_to_list(Path)).
 
 path_to_list(Path) when is_binary(Path) ->
     unicode:characters_to_list(Path);

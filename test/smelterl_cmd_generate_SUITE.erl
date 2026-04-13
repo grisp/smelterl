@@ -12,6 +12,7 @@
     generate_requires_output_manifest_for_export_legal/1,
     generate_requires_export_legal_for_include_sources/1,
     generate_accepts_valid_main_and_auxiliary_target_selection/1,
+    generate_writes_manifest_with_exported_buildroot_legal/1,
     generate_exports_merged_legal_tree/1,
     generate_reports_unknown_auxiliary_target/1,
     generate_writes_config_in_from_plan_extra_config/1,
@@ -31,6 +32,7 @@ all() ->
         generate_requires_output_manifest_for_export_legal,
         generate_requires_export_legal_for_include_sources,
         generate_accepts_valid_main_and_auxiliary_target_selection,
+        generate_writes_manifest_with_exported_buildroot_legal,
         generate_exports_merged_legal_tree,
         generate_reports_unknown_auxiliary_target,
         generate_writes_config_in_from_plan_extra_config,
@@ -139,6 +141,54 @@ generate_accepts_valid_main_and_auxiliary_target_selection(_Config) ->
     assert_equal(0, StatusAux),
     assert_equal(<<>>, OutputAux),
     assert_file_content(AuxiliaryExternalDesc, expected_external_desc()).
+
+generate_writes_manifest_with_exported_buildroot_legal(_Config) ->
+    PlanPath = write_sample_plan_file(),
+    OutputDir = make_temp_dir("smelterl-generate-manifest-output"),
+    {AuxLegalDir, MainLegalDir} = write_generate_legal_inputs(OutputDir),
+    MainManifest = filename:join(OutputDir, "ALLOY_SDK_MANIFEST"),
+    {Status, Output} = run_main([
+        "generate",
+        "--plan", PlanPath,
+        "--output-manifest", MainManifest,
+        "--buildroot-legal", AuxLegalDir,
+        "--buildroot-legal", MainLegalDir,
+        "--export-legal", "legal-info"
+    ]),
+    assert_equal(0, Status),
+    assert_equal(<<>>, Output),
+    {ok, [{sdk_manifest, <<"1.0">>, Fields}]} = file:consult(MainManifest),
+    BuildEnv = field_value(build_environment, Fields),
+    assert_member({buildroot_version, <<"2025.02.1">>}, BuildEnv),
+    BuildrootPackages = field_value(buildroot_packages, Fields),
+    assert_member(
+        {package, <<"auxpkg">>, [
+            {version, <<"0.1.0">>},
+            {license, <<"Apache-2.0">>},
+            {license_files, [<<"legal-info/licenses/auxpkg-0.1.0/LICENSE">>]}
+        ]},
+        BuildrootPackages
+    ),
+    assert_member(
+        {package, <<"mainpkg">>, [
+            {version, <<"1.0.0">>},
+            {license, <<"BSD-3-Clause">>},
+            {license_files, [<<"legal-info/licenses/mainpkg-1.0.0/LICENSE">>]}
+        ]},
+        BuildrootPackages
+    ),
+    HostPackages = field_value(buildroot_host_packages, Fields),
+    assert_member(
+        {package, <<"host-main">>, [
+            {version, <<"1.1">>},
+            {license, <<"Apache-2.0">>},
+            {license_files, [<<"legal-info/host-licenses/host-main-1.1/LICENSE">>]}
+        ]},
+        HostPackages
+    ),
+    Integrity = field_value(integrity, Fields),
+    assert_member({digest_algorithm, sha256}, Integrity),
+    assert_member({canonical_form, basic_term_canon}, Integrity).
 
 generate_exports_merged_legal_tree(_Config) ->
     PlanPath = write_sample_plan_file(),
@@ -342,19 +392,7 @@ sample_plan() ->
             aux_alpha => AuxiliaryTarget
         },
         [aux_alpha],
-        #{
-            product => demo,
-            target_arch => <<"arm-buildroot-linux-gnueabihf">>,
-            product_fields => #{},
-            repositories => [],
-            nugget_repo_map => #{demo => undefined},
-            nuggets => [],
-            auxiliary_products => [],
-            capabilities => #{},
-            sdk_outputs => [],
-            external_components => [],
-            smelterl_repository => smelterl
-        }
+        sample_manifest_seed()
     ),
     Plan.
 
@@ -396,19 +434,7 @@ write_sample_plan_with_packages_file() ->
             aux_alpha => AuxiliaryTarget
         },
         [aux_alpha],
-        #{
-            product => demo,
-            target_arch => <<"arm-buildroot-linux-gnueabihf">>,
-            product_fields => #{},
-            repositories => [],
-            nugget_repo_map => #{demo => undefined},
-            nuggets => [],
-            auxiliary_products => [],
-            capabilities => #{},
-            sdk_outputs => [],
-            external_components => [],
-            smelterl_repository => smelterl
-        }
+        sample_manifest_seed()
     ),
     ok = smelterl_plan:write_file(PlanPath, Plan),
     {PlanPath, ExpectedConfigIn, ExpectedExternalMk}.
@@ -459,19 +485,7 @@ write_sample_plan_with_defconfig_file() ->
             aux_alpha => AuxiliaryTarget
         },
         [aux_alpha],
-        #{
-            product => demo,
-            target_arch => <<"arm-buildroot-linux-gnueabihf">>,
-            product_fields => #{},
-            repositories => [],
-            nugget_repo_map => #{demo => undefined},
-            nuggets => [],
-            auxiliary_products => [],
-            capabilities => #{},
-            sdk_outputs => [],
-            external_components => [],
-            smelterl_repository => smelterl
-        }
+        sample_manifest_seed()
     ),
     ok = smelterl_plan:write_file(PlanPath, Plan),
     ExpectedDefconfig =
@@ -576,19 +590,7 @@ write_sample_plan_with_context_file() ->
         #{},
         #{main => MainTarget},
         [],
-        #{
-            product => demo,
-            target_arch => <<"arm-buildroot-linux-gnueabihf">>,
-            product_fields => #{},
-            repositories => [],
-            nugget_repo_map => #{demo => undefined},
-            nuggets => [],
-            auxiliary_products => [],
-            capabilities => #{},
-            sdk_outputs => [],
-            external_components => [],
-            smelterl_repository => smelterl
-        }
+        sample_manifest_seed()
     ),
     ok = smelterl_plan:write_file(PlanPath, Plan),
     ExpectedLines = [
@@ -862,6 +864,14 @@ assert_file_contains(Path, Needles) ->
             ct:fail("Failed to read ~ts: ~tp", [Path, Reason])
     end.
 
+field_value(Key, Fields) ->
+    case lists:keyfind(Key, 1, Fields) of
+        {Key, Value} ->
+            Value;
+        false ->
+            ct:fail("Missing field ~tp in ~tp", [Key, Fields])
+    end.
+
 assert_bash_syntax(Path) ->
     {Status, Output} = run_process("bash", ["-n", Path]),
     case Status of
@@ -936,6 +946,45 @@ ensure_file(Path, Content) ->
 
 path_binary(Path) ->
     list_to_binary(filename:absname(Path)).
+
+sample_manifest_seed() ->
+    #{
+        product => demo,
+        target_arch => <<"arm-buildroot-linux-gnueabihf">>,
+        product_fields => #{
+            name => <<"Demo Product">>,
+            version => <<"1.2.3">>
+        },
+        repositories => [
+            {smelterl, #{
+                name => <<"smelterl">>,
+                type => git,
+                url => <<"https://github.com/grisp/smelterl.git">>,
+                commit => <<"0123456789abcdef">>,
+                describe => <<"v0.1.0">>,
+                dirty => false
+            }}
+        ],
+        nugget_repo_map => #{demo => undefined},
+        nuggets => [],
+        auxiliary_products => [],
+        capabilities => #{
+            firmware_variants => [plain],
+            selectable_outputs => [],
+            firmware_parameters => []
+        },
+        sdk_outputs => [],
+        external_components => [],
+        smelterl_repository => smelterl
+    }.
+
+assert_member(Expected, Values) ->
+    case lists:member(Expected, Values) of
+        true ->
+            ok;
+        false ->
+            ct:fail("Expected ~tp to contain ~tp", [Values, Expected])
+    end.
 
 assert_equal(Expected, Actual) ->
     case Actual of
