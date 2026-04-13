@@ -8,6 +8,10 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added `smelterl_plan_generate_SUITE` with end-to-end Common Test coverage for
+  one main-plus-auxiliary sample, including a regression that proves
+  `smelterl generate` keeps using the serialized build plan after the original
+  motherlode metadata is corrupted.
 - Added generate-stage manifest finalization to `smelterl_gen_manifest`,
   including runtime build-environment fields, relocatable path rewriting,
   optional Buildroot package sections, integrity hashing, and focused Common
@@ -109,6 +113,17 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated auxiliary target planning so effective auxiliary trees now connect
+  the auxiliary root to the shared builder/toolchain/platform/system backbone,
+  allowing topology-driven generate outputs to include the shared target
+  context instead of only the auxiliary-specific nugget.
+- Updated plan-stage defconfig model building to resolve flavors from the real
+  selected target tree, fixing auxiliary-target defconfig planning when the
+  auxiliary root itself does not directly depend on the shared backbone
+  categories.
+- Updated `smelterl_tree_SUITE` expectations to cover the new auxiliary-tree
+  backbone attachment behavior uncovered by the end-to-end pipeline
+  regression.
 - Updated `smelterl generate` so `--output-manifest` now writes a finalized
   `ALLOY_SDK_MANIFEST` from the plan-carried seed, reusing merged Buildroot
   legal data and anchoring package license paths to the exported legal tree

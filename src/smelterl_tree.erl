@@ -275,18 +275,25 @@ normalize_auxiliary_target(NuggetId, Entry) ->
     {error, {invalid_auxiliary_product, NuggetId, Entry}}.
 
 build_auxiliary_targets(AuxiliarySpecs, MainTree, Motherlode) ->
-    BackboneEdges = backbone_edges(MainTree, Motherlode),
-    case build_auxiliary_targets(AuxiliarySpecs, BackboneEdges, Motherlode, []) of
+    {BackboneSeeds, BackboneEdges} = backbone_edges(MainTree, Motherlode),
+    case build_auxiliary_targets(
+        AuxiliarySpecs,
+        BackboneSeeds,
+        BackboneEdges,
+        Motherlode,
+        []
+    ) of
         {ok, AuxiliaryTargets} ->
             {ok, #{main => MainTree, auxiliaries => lists:reverse(AuxiliaryTargets)}};
         {error, _} = Error ->
             Error
     end.
 
-build_auxiliary_targets([], _BackboneEdges, _Motherlode, Acc) ->
+build_auxiliary_targets([], _BackboneSeeds, _BackboneEdges, _Motherlode, Acc) ->
     {ok, Acc};
 build_auxiliary_targets(
     [AuxiliarySpec | Rest],
+    BackboneSeeds,
     BackboneEdges,
     Motherlode,
     Acc
@@ -295,13 +302,18 @@ build_auxiliary_targets(
     RootNugget = maps:get(root_nugget, AuxiliarySpec),
     case build(RootNugget, Motherlode) of
         {ok, SpecificTree} ->
-            EffectiveTree = compose_effective_auxiliary_tree(SpecificTree, BackboneEdges),
+            EffectiveTree = compose_effective_auxiliary_tree(
+                SpecificTree,
+                BackboneSeeds,
+                BackboneEdges
+            ),
             AuxiliaryTarget = AuxiliarySpec#{
                 specific_tree => SpecificTree,
                 tree => EffectiveTree
             },
             build_auxiliary_targets(
                 Rest,
+                BackboneSeeds,
                 BackboneEdges,
                 Motherlode,
                 [AuxiliaryTarget | Acc]
@@ -320,11 +332,19 @@ backbone_edges(MainTree, Motherlode) ->
         is_backbone_category(nugget_category(NuggetId, Motherlode))
     ],
     BackboneIds = reachable_ids(BackboneSeeds, maps:get(edges, MainTree), []),
-    filter_edges(BackboneIds, maps:get(edges, MainTree)).
+    {BackboneSeeds, filter_edges(BackboneIds, maps:get(edges, MainTree))}.
 
-compose_effective_auxiliary_tree(SpecificTree, BackboneEdges) ->
-    EffectiveEdges = merge_edge_maps(maps:get(edges, SpecificTree), BackboneEdges),
-    #{root => maps:get(root, SpecificTree), edges => EffectiveEdges}.
+compose_effective_auxiliary_tree(SpecificTree, BackboneSeeds, BackboneEdges) ->
+    Root = maps:get(root, SpecificTree),
+    SpecificEdges0 = maps:get(edges, SpecificTree),
+    RootDependencies = maps:get(Root, SpecificEdges0, []),
+    SpecificEdges1 = maps:put(
+        Root,
+        dedupe_keep_first(RootDependencies ++ BackboneSeeds),
+        SpecificEdges0
+    ),
+    EffectiveEdges = merge_edge_maps(SpecificEdges1, BackboneEdges),
+    #{root => Root, edges => EffectiveEdges}.
 
 merge_edge_maps(LeftEdges, RightEdges) ->
     NodeIds = dedupe_keep_first(maps:keys(LeftEdges) ++ maps:keys(RightEdges)),

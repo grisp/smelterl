@@ -16,6 +16,7 @@ appends the deterministic target-local Buildroot wrapper hooks.
 %=== EXPORTS ===================================================================
 
 -export([build_model/5]).
+-export([build_model/6]).
 -export([render/1]).
 -export([render/2]).
 
@@ -49,9 +50,28 @@ serialization task.
 ) ->
     {ok, smelterl:defconfig_model()} | {error, term()}.
 build_model(TargetId, Topology, Motherlode, Config, ProductId) ->
+    Tree = #{
+        root => ProductId,
+        edges => maps:from_list([{NuggetId, []} || NuggetId <- Topology])
+    },
+    build_model(TargetId, Topology, Motherlode, Config, ProductId, Tree).
+
+-doc """
+Build one plan-storable defconfig model using the selected target tree.
+""".
+-spec build_model(
+    smelterl:target_id(),
+    smelterl:nugget_topology_order(),
+    smelterl:motherlode(),
+    smelterl:config(),
+    smelterl:nugget_id(),
+    smelterl:nugget_tree()
+) ->
+    {ok, smelterl:defconfig_model()} | {error, term()}.
+build_model(TargetId, Topology, Motherlode, Config, ProductId, Tree) ->
     maybe
         {ok, CumulativeSpec} ?= load_cumulative_key_spec(),
-        {ok, Flavors} ?= resolve_flavors(ProductId, Topology, Motherlode),
+        {ok, Flavors} ?= resolve_flavors(Tree, Motherlode),
         Substitutions = substitution_values(
             TargetId,
             ProductId,
@@ -119,11 +139,7 @@ initial_state() ->
         cumulative => #{}
     }.
 
-resolve_flavors(ProductId, Topology, Motherlode) ->
-    Tree = #{
-        root => ProductId,
-        edges => maps:from_list([{NuggetId, []} || NuggetId <- Topology])
-    },
+resolve_flavors(Tree, Motherlode) ->
     smelterl_validate:resolved_flavors(Tree, Motherlode).
 
 merge_fragments([], _Motherlode, _Flavors, _CumulativeSpec, _Substitutions, State) ->
