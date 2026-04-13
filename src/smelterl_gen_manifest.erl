@@ -3,16 +3,21 @@
 
 -module(smelterl_gen_manifest).
 -moduledoc """
-Build the deterministic manifest seed carried by the Smelterl plan pipeline.
+Build and finalize the Smelterl SDK manifest.
 
-This module currently implements the plan-stage seed preparation only. The
-later generate-stage manifest finalization remains a separate backlog task.
+The plan stage prepares a deterministic manifest seed that is stored in the
+build plan. The main-target generate stage finalizes that seed with runtime
+environment fields, optional merged Buildroot legal data, relocatable path
+rewrites, and integrity metadata before writing `ALLOY_SDK_MANIFEST`.
 """.
 
 
 %=== EXPORTS ===================================================================
 
 -export([prepare_seed/7]).
+-export([build_from_seed/4]).
+-export([generate/3]).
+-export([generate/4]).
 
 
 %=== TYPES =====================================================================
@@ -91,8 +96,666 @@ prepare_seed(
             Error
     end.
 
+-doc """
+Finalize a plan-carried manifest seed into one in-memory SDK manifest term.
+""".
+-spec build_from_seed(
+    smelterl:manifest_seed(),
+    smelterl:br_legal_info() | undefined,
+    smelterl:file_path(),
+    map()
+) ->
+    {ok, term()} | {error, term()}.
+build_from_seed(Seed, BuildrootLegal, BasePath, RuntimeEnv) ->
+    maybe
+        ok ?= validate_manifest_seed(Seed),
+        {ok, ProductFields} ?= product_section_fields(Seed, RuntimeEnv),
+        {ok, BuildEnvironmentFields} ?= build_environment_fields(
+            Seed,
+            BuildrootLegal,
+            RuntimeEnv
+        ),
+        {ok, Repositories} ?= repository_section_entries(Seed),
+        {ok, Nuggets} ?= nugget_section_entries(
+            maps:get(nuggets, Seed, []),
+            BasePath
+        ),
+        {ok, AuxiliaryProducts} ?= auxiliary_section_entries(
+            maps:get(auxiliary_products, Seed, [])
+        ),
+        {ok, Capabilities} ?= capabilities_section_fields(
+            maps:get(capabilities, Seed, #{})
+        ),
+        {ok, SdkOutputs} ?= sdk_outputs_section_entries(
+            maps:get(sdk_outputs, Seed, [])
+        ),
+        {ok, BuildrootSections} ?= buildroot_section_entries(
+            BuildrootLegal,
+            BasePath
+        ),
+        {ok, ExternalComponents} ?= external_component_section_entries(
+            maps:get(external_components, Seed, []),
+            BasePath
+        ),
+        ManifestWithoutIntegrity =
+            {sdk_manifest,
+                <<"1.0">>,
+                ProductFields ++
+                    [
+                        {build_environment, BuildEnvironmentFields},
+                        {repositories, Repositories},
+                        {nuggets, Nuggets},
+                        {auxiliary_products, AuxiliaryProducts},
+                        {capabilities, Capabilities},
+                        {sdk_outputs, SdkOutputs}
+                    ] ++
+                    BuildrootSections ++
+                    [
+                        {external_components, ExternalComponents}
+                    ]},
+        append_integrity(ManifestWithoutIntegrity)
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-doc """
+Finalize a manifest seed and serialize it as one UTF-8 Erlang-term file.
+""".
+-spec generate(
+    smelterl:manifest_seed(),
+    smelterl:br_legal_info() | undefined,
+    smelterl:file_path()
+) ->
+    {ok, iodata()} | {error, term()}.
+generate(Seed, BuildrootLegal, BasePath) ->
+    maybe
+        {ok, Manifest} ?= build_from_seed(
+            Seed,
+            BuildrootLegal,
+            BasePath,
+            runtime_environment()
+        ),
+        {ok, smelterl_file:format_term(Manifest)}
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-doc """
+Finalize a manifest seed and write the resulting term file to a path or device.
+""".
+-spec generate(
+    smelterl:manifest_seed(),
+    smelterl:br_legal_info() | undefined,
+    smelterl:file_path(),
+    smelterl:file_path() | file:io_device()
+) ->
+    ok | {error, term()}.
+generate(Seed, BuildrootLegal, BasePath, PathOrDevice) ->
+    maybe
+        {ok, Manifest} ?= build_from_seed(
+            Seed,
+            BuildrootLegal,
+            BasePath,
+            runtime_environment()
+        ),
+        smelterl_file:write_term(PathOrDevice, Manifest)
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
 
 %=== INTERNAL FUNCTIONS ========================================================
+
+-spec validate_manifest_seed(term()) -> ok | {error, term()}.
+validate_manifest_seed(Seed) when is_map(Seed) ->
+    RequiredKeys = [
+        product,
+        target_arch,
+        product_fields,
+        repositories,
+        nuggets,
+        auxiliary_products,
+        capabilities,
+        sdk_outputs,
+        external_components,
+        smelterl_repository
+    ],
+    case [Key || Key <- RequiredKeys, not maps:is_key(Key, Seed)] of
+        [] ->
+            validate_manifest_seed_repository(Seed);
+        Missing ->
+            {error, {invalid_manifest_seed, {missing_fields, Missing}}}
+    end;
+validate_manifest_seed(Seed) ->
+    {error, {invalid_manifest_seed, Seed}}.
+
+-spec validate_manifest_seed_repository(smelterl:manifest_seed()) ->
+    ok | {error, term()}.
+validate_manifest_seed_repository(Seed) ->
+    RepositoryIds = [
+        RepoId
+     || {RepoId, _Fields} <- maps:get(repositories, Seed, [])
+    ],
+    SmelterlRepository = maps:get(smelterl_repository, Seed),
+    case lists:member(SmelterlRepository, RepositoryIds) of
+        true ->
+            ok;
+        false ->
+            {error,
+                {invalid_manifest_seed,
+                    {unknown_smelterl_repository, SmelterlRepository}}}
+    end.
+
+-spec product_section_fields(smelterl:manifest_seed(), map()) ->
+    {ok, [{atom(), term()}]} | {error, term()}.
+product_section_fields(Seed, RuntimeEnv) ->
+    maybe
+        {ok, BuildDate} ?= required_binary_field(build_date, RuntimeEnv),
+        ProductId = maps:get(product, Seed),
+        ProductFields = maps:get(product_fields, Seed, #{}),
+        {ok,
+            [
+                {product, ProductId}
+            ] ++
+                optional_field_tuple(
+                    product_name,
+                    maps:get(name, ProductFields, undefined)
+                ) ++
+                optional_field_tuple(
+                    product_description,
+                    maps:get(description, ProductFields, undefined)
+                ) ++
+                optional_field_tuple(
+                    product_version,
+                    maps:get(version, ProductFields, undefined)
+                ) ++
+                [
+                    {target_arch, maps:get(target_arch, Seed)},
+                    {build_date, BuildDate}
+                ]}
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec build_environment_fields(
+    smelterl:manifest_seed(),
+    smelterl:br_legal_info() | undefined,
+    map()
+) ->
+    {ok, [{atom(), term()}]} | {error, term()}.
+build_environment_fields(Seed, BuildrootLegal, RuntimeEnv) ->
+    maybe
+        {ok, HostOs} ?= required_binary_field(host_os, RuntimeEnv),
+        {ok, HostArch} ?= required_binary_field(host_arch, RuntimeEnv),
+        {ok, SmelterlVersion} ?= required_binary_field(
+            smelterl_version,
+            RuntimeEnv
+        ),
+        BuildrootVersion = buildroot_version(BuildrootLegal, RuntimeEnv),
+        {ok,
+            [
+                {host_os, HostOs},
+                {host_arch, HostArch},
+                {smelterl_version, SmelterlVersion},
+                {smelterl_repository, maps:get(smelterl_repository, Seed)}
+            ] ++
+                optional_field_tuple(buildroot_version, BuildrootVersion)}
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec repository_section_entries(smelterl:manifest_seed()) ->
+    {ok, [{smelterl:repo_id(), [{atom(), term()}]}]}.
+repository_section_entries(Seed) ->
+    {ok,
+        [
+            {RepoId, repository_fields(RepoFields)}
+         || {RepoId, RepoFields} <- maps:get(repositories, Seed, [])
+        ]}.
+
+-spec repository_fields(map()) -> [{atom(), term()}].
+repository_fields(RepoFields) ->
+    [
+        {name, maps:get(name, RepoFields)},
+        {type, maps:get(type, RepoFields)},
+        {url, maps:get(url, RepoFields)},
+        {commit, maps:get(commit, RepoFields)},
+        {describe, maps:get(describe, RepoFields)},
+        {dirty, maps:get(dirty, RepoFields)}
+    ] ++
+        optional_field_tuple(
+            path_in_repo,
+            maps:get(path_in_repo, RepoFields, undefined)
+        ).
+
+-spec nugget_section_entries([map()], smelterl:file_path()) ->
+    {ok, [{nugget, smelterl:nugget_id(), [{atom(), term()}]}]} | {error, term()}.
+nugget_section_entries(Nuggets, BasePath) ->
+    build_named_entries(
+        Nuggets,
+        fun render_nugget_entry/2,
+        BasePath
+    ).
+
+-spec render_nugget_entry(map(), smelterl:file_path()) ->
+    {ok, {nugget, smelterl:nugget_id(), [{atom(), term()}]}} | {error, term()}.
+render_nugget_entry(#{id := NuggetId, fields := Fields}, BasePath) ->
+    maybe
+        {ok, NuggetFields} ?= relativized_fields(
+            Fields,
+            [license_files],
+            BasePath,
+            [version, repository, category, flavor, provides, license, license_files]
+        ),
+        {ok, {nugget, NuggetId, NuggetFields}}
+    else
+        {error, _} = Error ->
+            Error
+    end;
+render_nugget_entry(Entry, _BasePath) ->
+    {error, {invalid_manifest_seed, {invalid_nugget_entry, Entry}}}.
+
+-spec auxiliary_section_entries([map()]) ->
+    {ok, [{auxiliary, smelterl:target_id(), [{atom(), term()}]}]}.
+auxiliary_section_entries(AuxiliaryProducts) ->
+    {ok,
+        [
+            {auxiliary,
+                maps:get(id, Auxiliary),
+                [
+                    {root_nugget, maps:get(root_nugget, Auxiliary)}
+                ] ++
+                    optional_field_tuple(
+                        constraints,
+                        maps:get(constraints, Auxiliary, [])
+                    )}
+         || Auxiliary <- AuxiliaryProducts
+        ]}.
+
+-spec capabilities_section_fields(map()) -> {ok, [{atom(), term()}]}.
+capabilities_section_fields(Capabilities) ->
+    {ok,
+        [
+            {firmware_variants, maps:get(firmware_variants, Capabilities, [])},
+            {selectable_outputs, maps:get(selectable_outputs, Capabilities, [])},
+            {firmware_parameters,
+                [
+                    {maps:get(id, Parameter), parameter_fields(Parameter)}
+                 || Parameter <- maps:get(firmware_parameters, Capabilities, [])
+                ]}
+        ]}.
+
+-spec parameter_fields(map()) -> [{atom(), term()}].
+parameter_fields(Parameter) ->
+    [
+        {type, maps:get(type, Parameter)}
+    ] ++
+        optional_field_tuple(required, maps:get(required, Parameter, undefined)) ++
+        optional_field_tuple(name, maps:get(name, Parameter, undefined)) ++
+        optional_field_tuple(
+            description,
+            maps:get(description, Parameter, undefined)
+        ) ++
+        optional_field_tuple(default, maps:get(default, Parameter, undefined)).
+
+-spec sdk_outputs_section_entries([map()]) ->
+    {ok, [{target, smelterl:target_id(), [{output, atom(), [{atom(), term()}]}]}]}.
+sdk_outputs_section_entries(SdkOutputs) ->
+    {ok,
+        [
+            {target,
+                maps:get(target, TargetEntry),
+                [
+                    {output, maps:get(id, Output), sdk_output_fields(Output)}
+                 || Output <- maps:get(outputs, TargetEntry, [])
+                ]}
+         || TargetEntry <- SdkOutputs
+        ]}.
+
+-spec sdk_output_fields(map()) -> [{atom(), term()}].
+sdk_output_fields(Output) ->
+    [
+        {nugget, maps:get(nugget, Output)}
+    ] ++
+        optional_field_tuple(name, maps:get(name, Output, undefined)) ++
+        optional_field_tuple(
+            description,
+            maps:get(description, Output, undefined)
+        ).
+
+-spec buildroot_section_entries(
+    smelterl:br_legal_info() | undefined,
+    smelterl:file_path()
+) ->
+    {ok, [{atom(), term()}]} | {error, term()}.
+buildroot_section_entries(undefined, _BasePath) ->
+    {ok, []};
+buildroot_section_entries(BuildrootLegal, BasePath) ->
+    maybe
+        {ok, Packages} ?= buildroot_package_entries(
+            maps:get(packages, BuildrootLegal, []),
+            BasePath
+        ),
+        {ok, HostPackages} ?= buildroot_package_entries(
+            maps:get(host_packages, BuildrootLegal, []),
+            BasePath
+        ),
+        {ok,
+            [
+                {buildroot_packages, Packages},
+                {buildroot_host_packages, HostPackages}
+            ]}
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec buildroot_package_entries([smelterl:br_package_entry()], smelterl:file_path()) ->
+    {ok, [{package, binary(), [{atom(), term()}]}]} | {error, term()}.
+buildroot_package_entries(Packages, BasePath) ->
+    maybe
+        {ok, Entries} ?= build_named_entries(
+            [
+                #{id => maps:get(name, Package), fields => Package}
+             || Package <- Packages
+            ],
+            fun render_buildroot_package_entry/2,
+            BasePath
+        ),
+        {ok, Entries}
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec render_buildroot_package_entry(map(), smelterl:file_path()) ->
+    {ok, {package, binary(), [{atom(), term()}]}} | {error, term()}.
+render_buildroot_package_entry(#{id := Name, fields := Fields}, BasePath) ->
+    maybe
+        {ok, PackageFields} ?= relativized_fields(
+            Fields,
+            [license_files],
+            BasePath,
+            [version, license, license_files]
+        ),
+        {ok, {package, Name, PackageFields}}
+    else
+        {error, _} = Error ->
+            Error
+    end;
+render_buildroot_package_entry(Entry, _BasePath) ->
+    {error, {invalid_manifest_seed, {invalid_buildroot_package_entry, Entry}}}.
+
+-spec external_component_section_entries([map()], smelterl:file_path()) ->
+    {ok, [{component, atom(), [{atom(), term()}]}]} | {error, term()}.
+external_component_section_entries(Components, BasePath) ->
+    build_named_entries(
+        Components,
+        fun render_external_component_entry/2,
+        BasePath
+    ).
+
+-spec render_external_component_entry(map(), smelterl:file_path()) ->
+    {ok, {component, atom(), [{atom(), term()}]}} | {error, term()}.
+render_external_component_entry(#{id := ComponentId} = Component, BasePath) ->
+    maybe
+        {ok, ComponentFields} ?= relativized_fields(
+            Component,
+            [license_files],
+            BasePath,
+            [nugget, name, description, version, license, license_files]
+        ),
+        {ok, {component, ComponentId, ComponentFields}}
+    else
+        {error, _} = Error ->
+            Error
+    end;
+render_external_component_entry(Entry, _BasePath) ->
+    {error, {invalid_manifest_seed, {invalid_external_component_entry, Entry}}}.
+
+-spec build_named_entries([map()], fun((map(), smelterl:file_path()) -> {ok, term()} | {error, term()}), smelterl:file_path()) ->
+    {ok, [term()]} | {error, term()}.
+build_named_entries(Entries, RenderFun, BasePath) ->
+    build_named_entries(Entries, RenderFun, BasePath, []).
+
+build_named_entries([], _RenderFun, _BasePath, Acc) ->
+    {ok, lists:reverse(Acc)};
+build_named_entries([Entry | Rest], RenderFun, BasePath, Acc) ->
+    case RenderFun(Entry, BasePath) of
+        {ok, RenderedEntry} ->
+            build_named_entries(Rest, RenderFun, BasePath, [RenderedEntry | Acc]);
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec relativized_fields(map(), [atom()], smelterl:file_path(), [atom()]) ->
+    {ok, [{atom(), term()}]} | {error, term()}.
+relativized_fields(Fields, PathKeys, BasePath, OrderedKeys) ->
+    relativized_fields(OrderedKeys, Fields, PathKeys, BasePath, []).
+
+relativized_fields([], _Fields, _PathKeys, _BasePath, Acc) ->
+    {ok, lists:reverse(Acc)};
+relativized_fields([Key | Rest], Fields, PathKeys, BasePath, Acc) ->
+    case maps:get(Key, Fields, undefined) of
+        undefined ->
+            relativized_fields(Rest, Fields, PathKeys, BasePath, Acc);
+        [] ->
+            relativized_fields(Rest, Fields, PathKeys, BasePath, Acc);
+        Value ->
+            case maybe_relativize_value(Key, Value, PathKeys, BasePath) of
+                {ok, RelativizedValue} ->
+                    relativized_fields(
+                        Rest,
+                        Fields,
+                        PathKeys,
+                        BasePath,
+                        [{Key, RelativizedValue} | Acc]
+                    );
+                {error, _} = Error ->
+                    Error
+            end
+    end.
+
+-spec maybe_relativize_value(atom(), term(), [atom()], smelterl:file_path()) ->
+    {ok, term()} | {error, term()}.
+maybe_relativize_value(Key, Value, PathKeys, BasePath) ->
+    case lists:member(Key, PathKeys) of
+        false ->
+            {ok, Value};
+        true ->
+            relativize_paths(Value, BasePath)
+    end.
+
+-spec relativize_paths(term(), smelterl:file_path()) -> {ok, term()} | {error, term()}.
+relativize_paths(Paths, BasePath) when is_list(Paths) ->
+    relativize_paths(Paths, BasePath, []);
+relativize_paths(_Paths, BasePath) ->
+    {error, {relativize_failed, invalid_path_list, BasePath}}.
+
+relativize_paths([], _BasePath, Acc) ->
+    {ok, lists:reverse(Acc)};
+relativize_paths([Path | Rest], BasePath, Acc) ->
+    case relativize_path(Path, BasePath) of
+        {ok, RelativePath} ->
+            relativize_paths(Rest, BasePath, [RelativePath | Acc]);
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec relativize_path(term(), smelterl:file_path()) ->
+    {ok, smelterl:file_path()} | {error, term()}.
+relativize_path(Path, BasePath) when is_binary(Path); is_list(Path) ->
+    try
+        PathString = to_list(Path),
+        RelativePath =
+            case filename:pathtype(PathString) of
+                absolute ->
+                    smelterl_file:relativize(
+                        to_binary(PathString),
+                        BasePath
+                    );
+                _Relative ->
+                    to_binary(PathString)
+            end,
+        {ok, RelativePath}
+    catch
+        _Class:_Reason ->
+            {error, {relativize_failed, to_binary(Path), BasePath}}
+    end;
+relativize_path(Path, BasePath) ->
+    {error, {relativize_failed, Path, BasePath}}.
+
+-spec append_integrity(term()) -> {ok, term()} | {error, term()}.
+append_integrity({sdk_manifest, Version, Fields}) ->
+    case manifest_digest({sdk_manifest, Version, Fields}) of
+        {ok, Digest} ->
+            {ok,
+                {sdk_manifest,
+                    Version,
+                    Fields ++
+                        [
+                            {integrity,
+                                [
+                                    {digest_algorithm, sha256},
+                                    {canonical_form, basic_term_canon},
+                                    {digest, Digest}
+                                ]}
+                        ]}};
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec manifest_digest(term()) -> {ok, binary()} | {error, term()}.
+manifest_digest(Term) ->
+    try
+        {ok,
+            binary_to_hex(
+                crypto:hash(
+                    sha256,
+                    unicode:characters_to_binary(
+                        io_lib:format("~0tp.~n", [Term])
+                    )
+                )
+            )}
+    catch
+        Class:Reason ->
+            {error, {integrity_failed, {Class, Reason}}}
+    end.
+
+-spec buildroot_version(smelterl:br_legal_info() | undefined, map()) ->
+    binary() | undefined.
+buildroot_version(undefined, RuntimeEnv) ->
+    maps:get(buildroot_version, RuntimeEnv, undefined);
+buildroot_version(BuildrootLegal, RuntimeEnv) ->
+    case maps:get(br_version, BuildrootLegal, undefined) of
+        undefined ->
+            maps:get(buildroot_version, RuntimeEnv, undefined);
+        <<>> ->
+            maps:get(buildroot_version, RuntimeEnv, undefined);
+        Version ->
+            Version
+    end.
+
+-spec required_binary_field(atom(), map()) ->
+    {ok, binary()} | {error, term()}.
+required_binary_field(Key, RuntimeEnv) ->
+    case maps:get(Key, RuntimeEnv, undefined) of
+        Value when is_binary(Value), Value =/= <<>> ->
+            {ok, Value};
+        _ ->
+            {error, {invalid_manifest_seed, {invalid_runtime_env, Key}}}
+    end.
+
+-spec optional_field_tuple(atom(), term()) -> [{atom(), term()}].
+optional_field_tuple(_Key, undefined) ->
+    [];
+optional_field_tuple(_Key, []) ->
+    [];
+optional_field_tuple(Key, Value) ->
+    [{Key, Value}].
+
+-spec runtime_environment() -> map().
+runtime_environment() ->
+    #{
+        host_os => host_os(),
+        host_arch => host_arch(),
+        smelterl_version => smelterl_version(),
+        build_date => current_utc_timestamp()
+    }.
+
+-spec host_os() -> binary().
+host_os() ->
+    case os:type() of
+        {unix, linux} ->
+            <<"Linux">>;
+        {unix, darwin} ->
+            <<"Darwin">>;
+        {win32, nt} ->
+            <<"Windows">>;
+        {_Family, Name} ->
+            atom_to_binary(Name, utf8)
+    end.
+
+-spec host_arch() -> binary().
+host_arch() ->
+    Architecture = unicode:characters_to_binary(erlang:system_info(system_architecture)),
+    case binary:split(Architecture, <<"-">>) of
+        [HostArch | _Rest] ->
+            HostArch;
+        _ ->
+            Architecture
+    end.
+
+-spec smelterl_version() -> binary().
+smelterl_version() ->
+    case application:get_env(smelterl, version) of
+        {ok, Version} ->
+            to_binary(Version);
+        undefined ->
+            case application:get_key(smelterl, vsn) of
+                {ok, Version} ->
+                    to_binary(Version);
+                undefined ->
+                    <<"dev">>
+            end
+    end.
+
+-spec current_utc_timestamp() -> binary().
+current_utc_timestamp() ->
+    unicode:characters_to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second),
+            [{offset, "Z"}, {unit, second}]
+        )
+    ).
+
+-spec binary_to_hex(binary()) -> binary().
+binary_to_hex(Binary) ->
+    << <<(hex_digit((Byte bsr 4) band 16#0f))/utf8,
+         (hex_digit(Byte band 16#0f))/utf8>> || <<Byte>> <= Binary >>.
+
+-spec hex_digit(0..15) -> char().
+hex_digit(Value) when Value < 10 ->
+    $0 + Value;
+hex_digit(Value) ->
+    $a + (Value - 10).
+
+-spec to_list(smelterl:file_path() | string()) -> string().
+to_list(Path) when is_binary(Path) ->
+    unicode:characters_to_list(Path);
+to_list(Path) ->
+    Path.
+
+-spec to_binary(smelterl:file_path() | string()) -> binary().
+to_binary(Path) when is_binary(Path) ->
+    Path;
+to_binary(Path) ->
+    unicode:characters_to_binary(Path).
 
 -spec target_arch_triplet(smelterl:nugget_id(), smelterl:config()) ->
     {ok, binary()} | {error, term()}.

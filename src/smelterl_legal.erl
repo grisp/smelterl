@@ -6,9 +6,9 @@
 Parse and export Buildroot `legal-info/` data for Smelterl generate stages.
 
 `parse_legal/1` parses one Buildroot `legal-info/` tree into reusable package
-data. `export_legal/3` merges one or more such trees into a deterministic
-export directory, preserving README blocks per input while deduplicating the
-copied manifests and file trees.
+data. `collect_legal/3` merges one or more such trees for manifest
+finalization and can optionally write the merged export directory at the same
+time. `export_legal/3` is the export-only wrapper over that shared path.
 """.
 
 -include_lib("kernel/include/file.hrl").
@@ -17,6 +17,7 @@ copied manifests and file trees.
 %=== EXPORTS ===================================================================
 
 -export([parse_legal/1]).
+-export([collect_legal/3]).
 -export([export_legal/3]).
 
 
@@ -51,6 +52,58 @@ parse_legal(Path) ->
     end.
 
 -doc """
+Merge one or more Buildroot `legal-info/` trees for manifest generation.
+
+When `ExportDir` is provided, the merged export is written first and the
+returned package/license paths are anchored to that exported tree. When it is
+`undefined`, the returned package/license paths are anchored to the original
+input legal-info trees.
+""".
+-spec collect_legal(
+    [smelterl:file_path()],
+    smelterl:file_path() | undefined,
+    boolean()
+) ->
+    {ok, smelterl:br_legal_info()} | {error, term()}.
+collect_legal(BuildrootPaths, ExportDir, IncludeSources) ->
+    AbsoluteExportDir =
+        case ExportDir of
+            undefined ->
+                undefined;
+            Path ->
+                absolute_binary_path(Path)
+        end,
+    maybe
+        ok ?= maybe_ensure_export_dir_absent(AbsoluteExportDir),
+        {ok, Inputs} ?= load_legal_inputs(BuildrootPaths, 1, []),
+        {ok, BuildrootVersion} ?= merge_buildroot_versions(Inputs),
+        {ok, Packages} ?= merge_manifest_package_entries(Inputs, packages),
+        {ok, HostPackages} ?= merge_manifest_package_entries(
+            Inputs,
+            host_packages
+        ),
+        ok ?= maybe_export_merged_legal(
+            Inputs,
+            AbsoluteExportDir,
+            IncludeSources,
+            BuildrootVersion,
+            Packages,
+            HostPackages
+        ),
+        {ok,
+            #{
+                path => manifest_legal_path(Inputs, AbsoluteExportDir),
+                br_version => BuildrootVersion,
+                packages => manifest_package_entries(Packages, AbsoluteExportDir),
+                host_packages =>
+                    manifest_package_entries(HostPackages, AbsoluteExportDir)
+            }}
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-doc """
 Merge one or more Buildroot `legal-info/` trees into one exported directory.
 """.
 -spec export_legal(
@@ -59,49 +112,9 @@ Merge one or more Buildroot `legal-info/` trees into one exported directory.
     boolean()
 ) -> ok | {error, term()}.
 export_legal(BuildrootPaths, ExportDir, IncludeSources) ->
-    AbsoluteExportDir = absolute_binary_path(ExportDir),
-    maybe
-        ok ?= ensure_export_dir_absent(AbsoluteExportDir),
-        {ok, Inputs} ?= load_legal_inputs(BuildrootPaths, 1, []),
-        {ok, BuildrootVersion, Packages, HostPackages} ?= merge_legal_inputs(
-            Inputs
-        ),
-        ok ?= ensure_directory(AbsoluteExportDir),
-        ok ?= maybe_copy_buildroot_config(Inputs, AbsoluteExportDir),
-        ok ?= copy_tree_set(Inputs, AbsoluteExportDir, <<"licenses">>),
-        ok ?= copy_tree_set(Inputs, AbsoluteExportDir, <<"host-licenses">>),
-        ok ?= maybe_copy_sources(
-            IncludeSources,
-            Inputs,
-            AbsoluteExportDir
-        ),
-        ok ?= maybe_write_manifest(
-            Inputs,
-            filename:join(
-                binary_to_list(AbsoluteExportDir),
-                "manifest.csv"
-            ),
-            target,
-            BuildrootVersion,
-            Packages
-        ),
-        ok ?= maybe_write_manifest(
-            Inputs,
-            filename:join(
-                binary_to_list(AbsoluteExportDir),
-                "host-manifest.csv"
-            ),
-            host,
-            BuildrootVersion,
-            HostPackages
-        ),
-        ok ?= write_readme(
-            filename:join(binary_to_list(AbsoluteExportDir), "README"),
-            Inputs,
-            IncludeSources
-        ),
-        ok ?= write_sha256(AbsoluteExportDir)
-    else
+    case collect_legal(BuildrootPaths, ExportDir, IncludeSources) of
+        {ok, _LegalInfo} ->
+            ok;
         {error, _} = Error ->
             Error
     end.
@@ -120,6 +133,10 @@ export_legal(BuildrootPaths, ExportDir, IncludeSources) ->
 }.
 
 -type manifest_kind() :: target | host.
+-type merged_package_entry() :: #{
+    entry := smelterl:br_package_entry(),
+    source_path := smelterl:file_path()
+}.
 
 -spec ensure_legal_dir(smelterl:file_path()) -> ok | {error, term()}.
 ensure_legal_dir(LegalPath) ->
@@ -145,6 +162,13 @@ ensure_export_dir_absent(Path) ->
         {error, Posix} ->
             {error, {export_exists_check_failed, Path, Posix}}
     end.
+
+-spec maybe_ensure_export_dir_absent(smelterl:file_path() | undefined) ->
+    ok | {error, term()}.
+maybe_ensure_export_dir_absent(undefined) ->
+    ok;
+maybe_ensure_export_dir_absent(Path) ->
+    ensure_export_dir_absent(Path).
 
 -spec ensure_directory(smelterl:file_path()) -> ok | {error, term()}.
 ensure_directory(Path) ->
@@ -233,19 +257,192 @@ infer_target_id_parts([_Part | Rest]) ->
 infer_target_id_parts([]) ->
     undefined.
 
--spec merge_legal_inputs([legal_input()]) ->
-    {ok, binary(), [smelterl:br_package_entry()], [smelterl:br_package_entry()]} |
+-spec merge_manifest_package_entries([legal_input()], packages | host_packages) ->
+    {ok, [merged_package_entry()]} | {error, term()}.
+merge_manifest_package_entries(Inputs, Field) ->
+    merge_manifest_package_entries(Inputs, Field, #{}, []).
+
+merge_manifest_package_entries([], _Field, _Seen, Acc) ->
+    {ok,
+        lists:sort(
+            fun compare_manifest_package_entries/2,
+            Acc
+        )};
+merge_manifest_package_entries([Input | Rest], Field, Seen, Acc) ->
+    Entries = maps:get(Field, Input),
+    SourcePath = maps:get(path, Input),
+    case merge_manifest_package_entry_list(
+        Entries,
+        SourcePath,
+        Field,
+        Seen,
+        Acc
+    ) of
+        {ok, Seen1, Acc1} ->
+            merge_manifest_package_entries(Rest, Field, Seen1, Acc1);
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec merge_manifest_package_entry_list(
+    [smelterl:br_package_entry()],
+    smelterl:file_path(),
+    packages | host_packages,
+    #{{binary(), binary()} => merged_package_entry()},
+    [merged_package_entry()]
+) ->
+    {ok, #{{binary(), binary()} => merged_package_entry()}, [merged_package_entry()]} |
     {error, term()}.
-merge_legal_inputs(Inputs) ->
+merge_manifest_package_entry_list([], _SourcePath, _Field, Seen, Acc) ->
+    {ok, Seen, Acc};
+merge_manifest_package_entry_list([Entry | Rest], SourcePath, Field, Seen, Acc) ->
+    Key = {maps:get(name, Entry), maps:get(version, Entry)},
+    MergedEntry = #{entry => Entry, source_path => SourcePath},
+    case maps:get(Key, Seen, undefined) of
+        undefined ->
+            merge_manifest_package_entry_list(
+                Rest,
+                SourcePath,
+                Field,
+                maps:put(Key, MergedEntry, Seen),
+                [MergedEntry | Acc]
+            );
+        #{entry := Entry} ->
+            merge_manifest_package_entry_list(
+                Rest,
+                SourcePath,
+                Field,
+                Seen,
+                Acc
+            );
+        #{entry := Existing} ->
+            {error,
+                {conflicting_package_entry,
+                    Field,
+                    maps:get(name, Entry),
+                    maps:get(version, Entry),
+                    Existing,
+                    Entry}}
+    end.
+
+-spec compare_manifest_package_entries(
+    merged_package_entry(),
+    merged_package_entry()
+) -> boolean().
+compare_manifest_package_entries(
+    #{entry := Left},
+    #{entry := Right}
+) ->
+    compare_package_entries(Left, Right).
+
+-spec maybe_export_merged_legal(
+    [legal_input()],
+    smelterl:file_path() | undefined,
+    boolean(),
+    binary(),
+    [merged_package_entry()],
+    [merged_package_entry()]
+) -> ok | {error, term()}.
+maybe_export_merged_legal(_Inputs, undefined, _IncludeSources, _BuildrootVersion, _Packages, _HostPackages) ->
+    ok;
+maybe_export_merged_legal(
+    Inputs,
+    ExportDir,
+    IncludeSources,
+    BuildrootVersion,
+    Packages,
+    HostPackages
+) ->
     maybe
-        {ok, BuildrootVersion} ?= merge_buildroot_versions(Inputs),
-        {ok, Packages} ?= merge_package_entries(Inputs, packages),
-        {ok, HostPackages} ?= merge_package_entries(Inputs, host_packages),
-        {ok, BuildrootVersion, Packages, HostPackages}
+        ok ?= ensure_directory(ExportDir),
+        ok ?= maybe_copy_buildroot_config(Inputs, ExportDir),
+        ok ?= copy_tree_set(Inputs, ExportDir, <<"licenses">>),
+        ok ?= copy_tree_set(Inputs, ExportDir, <<"host-licenses">>),
+        ok ?= maybe_copy_sources(
+            IncludeSources,
+            Inputs,
+            ExportDir
+        ),
+        ok ?= maybe_write_manifest(
+            Inputs,
+            filename:join(
+                binary_to_list(ExportDir),
+                "manifest.csv"
+            ),
+            target,
+            BuildrootVersion,
+            merged_entries(Packages)
+        ),
+        ok ?= maybe_write_manifest(
+            Inputs,
+            filename:join(
+                binary_to_list(ExportDir),
+                "host-manifest.csv"
+            ),
+            host,
+            BuildrootVersion,
+            merged_entries(HostPackages)
+        ),
+        ok ?= write_readme(
+            filename:join(binary_to_list(ExportDir), "README"),
+            Inputs,
+            IncludeSources
+        ),
+        ok ?= write_sha256(ExportDir)
     else
         {error, _} = Error ->
             Error
     end.
+
+-spec merged_entries([merged_package_entry()]) -> [smelterl:br_package_entry()].
+merged_entries(Entries) ->
+    [
+        maps:get(entry, Entry)
+     || Entry <- Entries
+    ].
+
+-spec manifest_legal_path([legal_input()], smelterl:file_path() | undefined) ->
+    smelterl:file_path().
+manifest_legal_path(_Inputs, ExportDir) when is_binary(ExportDir) ->
+    ExportDir;
+manifest_legal_path([#{path := Path} | _Rest], undefined) ->
+    Path;
+manifest_legal_path([], undefined) ->
+    <<>>.
+
+-spec manifest_package_entries(
+    [merged_package_entry()],
+    smelterl:file_path() | undefined
+) -> [smelterl:br_package_entry()].
+manifest_package_entries(Entries, ExportDir) ->
+    [
+        maps:put(
+            license_files,
+            manifest_license_files(
+                maps:get(entry, Entry),
+                maps:get(source_path, Entry),
+                ExportDir
+            ),
+            maps:get(entry, Entry)
+        )
+     || Entry <- Entries
+    ].
+
+-spec manifest_license_files(
+    smelterl:br_package_entry(),
+    smelterl:file_path(),
+    smelterl:file_path() | undefined
+) -> [smelterl:file_path()].
+manifest_license_files(Entry, _SourcePath, ExportDir) when is_binary(ExportDir) ->
+    [
+        join_os_path(ExportDir, RelativePath)
+     || RelativePath <- maps:get(license_files, Entry, [])
+    ];
+manifest_license_files(Entry, SourcePath, undefined) ->
+    [
+        join_os_path(SourcePath, RelativePath)
+     || RelativePath <- maps:get(license_files, Entry, [])
+    ].
 
 -spec merge_buildroot_versions([legal_input()]) -> {ok, binary()} | {error, term()}.
 merge_buildroot_versions(Inputs) ->
@@ -261,54 +458,6 @@ merge_buildroot_versions(Inputs) ->
             {ok, Version};
         _ ->
             {error, {conflicting_buildroot_versions, Versions}}
-    end.
-
--spec merge_package_entries([legal_input()], packages | host_packages) ->
-    {ok, [smelterl:br_package_entry()]} | {error, term()}.
-merge_package_entries(Inputs, Field) ->
-    merge_package_entries(Inputs, Field, #{}, []).
-
-merge_package_entries([], _Field, _Seen, Acc) ->
-    {ok, lists:sort(fun compare_package_entries/2, Acc)};
-merge_package_entries([Input | Rest], Field, Seen, Acc) ->
-    Entries = maps:get(Field, Input),
-    case merge_package_entry_list(Entries, Field, Seen, Acc) of
-        {ok, Seen1, Acc1} ->
-            merge_package_entries(Rest, Field, Seen1, Acc1);
-        {error, _} = Error ->
-            Error
-    end.
-
--spec merge_package_entry_list(
-    [smelterl:br_package_entry()],
-    packages | host_packages,
-    #{{binary(), binary()} => smelterl:br_package_entry()},
-    [smelterl:br_package_entry()]
-) ->
-    {ok, #{{binary(), binary()} => smelterl:br_package_entry()}, [smelterl:br_package_entry()]} |
-    {error, term()}.
-merge_package_entry_list([], _Field, Seen, Acc) ->
-    {ok, Seen, Acc};
-merge_package_entry_list([Entry | Rest], Field, Seen, Acc) ->
-    Key = {maps:get(name, Entry), maps:get(version, Entry)},
-    case maps:get(Key, Seen, undefined) of
-        undefined ->
-            merge_package_entry_list(
-                Rest,
-                Field,
-                maps:put(Key, Entry, Seen),
-                [Entry | Acc]
-            );
-        Entry ->
-            merge_package_entry_list(Rest, Field, Seen, Acc);
-        Existing ->
-            {error,
-                {conflicting_package_entry,
-                    Field,
-                    maps:get(name, Entry),
-                    maps:get(version, Entry),
-                    Existing,
-                    Entry}}
     end.
 
 -spec compare_package_entries(
