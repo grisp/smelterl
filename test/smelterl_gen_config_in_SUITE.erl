@@ -68,7 +68,7 @@ generate_omits_comment_suffix_when_description_is_empty(_Config) ->
           "## Nugget Packages ##\n"
           "\n"
           "# plain_product\n"
-          "source \"$(ALLOY_MOTHERLODE)/builtin/plain_product/packages/Config.in\"\n"
+          "source \"$ALLOY_MOTHERLODE/builtin/plain_product/packages/Config.in\"\n"
           "\n">>,
         iolist_to_binary(Content)
     ).
@@ -169,12 +169,12 @@ expected_config_in() ->
       "## Nugget Packages ##\n"
       "\n"
       "# platform_core: Platform BSP\n"
-      "source \"$(ALLOY_MOTHERLODE)/builtin/platform_core/buildroot/Config.in\"\n"
-      "source \"$(ALLOY_MOTHERLODE)/builtin/platform_core/buildroot/pkg_alpha/Config.in\"\n"
-      "source \"$(ALLOY_MOTHERLODE)/builtin/platform_core/buildroot/pkg_zeta/Config.in\"\n"
+      "source \"$ALLOY_MOTHERLODE/builtin/platform_core/buildroot/Config.in\"\n"
+      "source \"$ALLOY_MOTHERLODE/builtin/platform_core/buildroot/pkg_alpha/Config.in\"\n"
+      "source \"$ALLOY_MOTHERLODE/builtin/platform_core/buildroot/pkg_zeta/Config.in\"\n"
       "\n"
       "# product_core: Product BSP\n"
-      "source \"$(ALLOY_MOTHERLODE)/builtin/product_core/packages/app_pkg/Config.in\"\n"
+      "source \"$ALLOY_MOTHERLODE/builtin/product_core/packages/app_pkg/Config.in\"\n"
       "\n">>.
 
 ensure_dir(Path) ->

@@ -54,10 +54,21 @@ help(plan) ->
     ].
 
 run(plan, Opts) ->
-    maybe
-        ok ?= require_options(Opts),
-        run_plan(Opts)
-    else
+    case resolve_log_level(Opts) of
+        {ok, LogLevel} ->
+            smelterl_log:with_log_level(
+                LogLevel,
+                fun() ->
+                    maybe
+                        ok ?= require_options(Opts),
+                        run_plan(Opts)
+                    else
+                        {error, Message} ->
+                            smelterl_log:error("~ts~n", [Message]),
+                            2
+                    end
+                end
+            );
         {error, Message} ->
             smelterl_log:error("~ts~n", [Message]),
             2
@@ -68,12 +79,39 @@ run(plan, Opts) ->
 
 run_plan(Opts) ->
     ProductId = list_to_atom(maps:get(product, Opts)),
+    MotherlodePath = maps:get(motherlode, Opts),
     maybe
-        {ok, Motherlode} ?= load_motherlode(maps:get(motherlode, Opts)),
+        smelterl_log:info(
+            "plan: loading motherlode '~ts' for product '~ts'.~n",
+            [MotherlodePath, atom_to_binary(ProductId, utf8)]
+        ),
+        {ok, Motherlode} ?= load_motherlode(MotherlodePath),
+        smelterl_log:debug(
+            "plan: loaded ~B repositories and ~B nuggets.~n",
+            [
+                map_size(maps:get(repositories, Motherlode, #{})),
+                map_size(maps:get(nuggets, Motherlode, #{}))
+            ]
+        ),
+        smelterl_log:info("plan: resolving target trees.~n", []),
         {ok, Targets} ?= build_targets(ProductId, Motherlode),
+        smelterl_log:debug(
+            "plan: resolved main target plus ~B auxiliaries.~n",
+            [length(maps:get(auxiliaries, Targets, []))]
+        ),
+        smelterl_log:info("plan: validating targets.~n", []),
         ok ?= validate_targets(Targets, Motherlode),
+        smelterl_log:info("plan: computing topology order.~n", []),
         {ok, TopologyOrders} ?= topology_orders(Targets),
         {ok, ExtraConfig} ?= parse_extra_config(Opts),
+        smelterl_log:debug(
+            "plan: normalized ~B extra-config entries.~n",
+            [map_size(ExtraConfig)]
+        ),
+        smelterl_log:info(
+            "plan: applying overrides and consolidating target state.~n",
+            []
+        ),
         {ok, OverriddenTargets, OverriddenTopologyOrders, TargetMotherlodes} ?=
             apply_overrides(Targets, TopologyOrders, Motherlode),
         {ok, Capabilities} ?= discover_capabilities(
@@ -116,6 +154,14 @@ run_plan(Opts) ->
             Capabilities
         ),
         AuxiliaryIds = [maps:get(id, Auxiliary) || Auxiliary <- maps:get(auxiliaries, OverriddenTargets, [])],
+        smelterl_log:debug(
+            "plan: capability summary variants=~B selectable_outputs=~B sdk_output_targets=~B.~n",
+            [
+                length(maps:get(firmware_variants, Capabilities, [])),
+                length(maps:get(selectable_outputs, Capabilities, [])),
+                map_size(maps:get(sdk_outputs_by_target, Capabilities, #{}))
+            ]
+        ),
         {ok, Plan} ?= build_plan(
             ProductId,
             ExtraConfig,
@@ -123,8 +169,10 @@ run_plan(Opts) ->
             AuxiliaryIds,
             ManifestSeed
         ),
+        smelterl_log:info("plan: writing build plan outputs.~n", []),
         ok ?= write_plan(maps:get(output_plan, Opts), Plan),
         ok ?= maybe_write_plan_env(maps:get(output_plan_env, Opts, undefined), Plan),
+        smelterl_log:debug("plan: wrote target ids ~tp.~n", [[main | AuxiliaryIds]]),
         0
     else
         {load_error, Reason} ->
@@ -160,6 +208,40 @@ run_plan(Opts) ->
         {topology_error, Reason} ->
             smelterl_log:error("~ts~n", [format_topology_error(Reason)]),
             1
+    end.
+
+resolve_log_level(Opts) ->
+    BaseLevel =
+        case maps:get(log, Opts, undefined) of
+            undefined ->
+                {ok, warning};
+            Value ->
+                case smelterl_log:parse_level(Value) of
+                    {ok, Level} ->
+                        {ok, Level};
+                    error ->
+                        {error,
+                            io_lib:format(
+                                "plan: invalid log level '~ts'. Expected error, warning, info, or debug.",
+                                [Value]
+                            )}
+                end
+        end,
+    case BaseLevel of
+        {error, _} = Error ->
+            Error;
+        {ok, Level0} ->
+            Level1 =
+                case maps:get(verbose, Opts, false) of
+                    true -> info;
+                    false -> Level0
+                end,
+            Level2 =
+                case maps:get(debug, Opts, false) of
+                    true -> debug;
+                    false -> Level1
+                end,
+            {ok, Level2}
     end.
 
 require_options(Opts) ->
@@ -425,69 +507,20 @@ load_build_info() ->
     case read_build_info_file() of
         {ok, BuildInfo} ->
             {ok, BuildInfo};
-        {error, missing_build_info} ->
-            infer_build_info_from_checkout();
         {error, Reason} ->
             {manifest_error, Reason}
     end.
 
 read_build_info_file() ->
-    case code:priv_dir(smelterl) of
-        {error, bad_name} ->
+    case smelterl_file:read_app_priv_term(smelterl, "build_info.term") of
+        {ok, BuildInfo} ->
+            {ok, BuildInfo};
+        {error, missing_priv_dir} ->
             {error, missing_build_info};
-        PrivDir ->
-            BuildInfoPath = filename:join(PrivDir, "build_info.term"),
-            case file:consult(BuildInfoPath) of
-                {ok, [BuildInfo]} ->
-                    {ok, BuildInfo};
-                {ok, _Terms} ->
-                    {error, invalid_build_info_file};
-                {error, _Reason} ->
-                    {error, missing_build_info}
-            end
-    end.
-
-infer_build_info_from_checkout() ->
-    maybe
-        {ok, AppRoot} ?= find_checkout_root(),
-        case smelterl_vcs:info(AppRoot) of
-            undefined ->
-                {manifest_error, missing_build_info};
-            RepoInfo ->
-                {ok,
-                    #{
-                        name => <<"smelterl">>,
-                        relpath => <<>>,
-                        repo => RepoInfo
-                    }}
-        end
-    else
-        {error, _} = Error ->
-            Error
-    end.
-
-find_checkout_root() ->
-    BeamPath = code:which(smelterl),
-    BeamDir = filename:dirname(BeamPath),
-    find_checkout_root(filename:dirname(BeamDir)).
-
-find_checkout_root("/") ->
-    {manifest_error, missing_build_info};
-find_checkout_root(Path) ->
-    case {
-        filelib:is_regular(filename:join(Path, "rebar.config")),
-        filelib:is_regular(filename:join(Path, "src/smelterl.app.src"))
-    } of
-        {true, true} ->
-            {ok, Path};
-        _ ->
-            Parent = filename:dirname(Path),
-            case Parent =:= Path of
-                true ->
-                    {manifest_error, missing_build_info};
-                false ->
-                    find_checkout_root(Parent)
-            end
+        {error, {read_failed, _Path, _Reason}} ->
+            {error, missing_build_info};
+        {error, {invalid_term, _Reason}} ->
+            {error, invalid_build_info_file}
     end.
 
 build_manifest_seed(

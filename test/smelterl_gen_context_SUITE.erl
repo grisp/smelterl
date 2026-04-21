@@ -33,6 +33,18 @@ render_main_context_includes_main_only_sections(_Config) ->
     assert_contains(Output, <<"ALLOY_EMBED_IMAGES=(\"rootfs.img\")">>),
     assert_contains(Output, <<"export ALLOY_FIRMWARE_OUTPUTS=(">>),
     assert_contains(Output, <<"export ALLOY_FIRMWARE_PARAMETERS=(">>),
+    assert_contains(
+        Output,
+        <<"export ALLOY_PRODUCT_VERSION=\"9.9.9\"\n\n## Firmware Variants ##">>
+    ),
+    assert_contains(
+        Output,
+        <<"export ALLOY_CONFIG_PLATFORM_MODE=\"imx8\"\n\n## Registries ##">>
+    ),
+    assert_contains(
+        Output,
+        <<"export ALLOY_SDK_OUTPUT_SYMBOLS_NAME=\"Symbols\"\n\n## Helper Functions ##">>
+    ),
     assert_contains(Output, <<"alloy_sdk_output_from_aux()">>).
 
 render_auxiliary_context_omits_main_only_sections(_Config) ->

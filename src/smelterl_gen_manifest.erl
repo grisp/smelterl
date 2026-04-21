@@ -548,6 +548,8 @@ relativized_fields([Key | Rest], Fields, PathKeys, BasePath, Acc) ->
             relativized_fields(Rest, Fields, PathKeys, BasePath, Acc);
         Value ->
             case maybe_relativize_value(Key, Value, PathKeys, BasePath) of
+                {ok, []} ->
+                    relativized_fields(Rest, Fields, PathKeys, BasePath, Acc);
                 {ok, RelativizedValue} ->
                     relativized_fields(
                         Rest,
@@ -568,47 +570,69 @@ maybe_relativize_value(Key, Value, PathKeys, BasePath) ->
         false ->
             {ok, Value};
         true ->
-            relativize_paths(Value, BasePath)
+            manifest_local_paths(Value, BasePath)
     end.
 
--spec relativize_paths(term(), smelterl:file_path()) -> {ok, term()} | {error, term()}.
-relativize_paths(Paths, BasePath) when is_list(Paths) ->
-    relativize_paths(Paths, BasePath, []);
-relativize_paths(_Paths, BasePath) ->
+-spec manifest_local_paths(term(), smelterl:file_path()) ->
+    {ok, [smelterl:file_path()]} | {error, term()}.
+manifest_local_paths(Paths, BasePath) when is_list(Paths) ->
+    manifest_local_paths(Paths, BasePath, []);
+manifest_local_paths(_Paths, BasePath) ->
     {error, {relativize_failed, invalid_path_list, BasePath}}.
 
-relativize_paths([], _BasePath, Acc) ->
+manifest_local_paths([], _BasePath, Acc) ->
     {ok, lists:reverse(Acc)};
-relativize_paths([Path | Rest], BasePath, Acc) ->
-    case relativize_path(Path, BasePath) of
+manifest_local_paths([Path | Rest], BasePath, Acc) ->
+    case manifest_local_path(Path, BasePath) of
         {ok, RelativePath} ->
-            relativize_paths(Rest, BasePath, [RelativePath | Acc]);
+            manifest_local_paths(Rest, BasePath, [RelativePath | Acc]);
+        skip ->
+            manifest_local_paths(Rest, BasePath, Acc);
         {error, _} = Error ->
             Error
     end.
 
--spec relativize_path(term(), smelterl:file_path()) ->
-    {ok, smelterl:file_path()} | {error, term()}.
-relativize_path(Path, BasePath) when is_binary(Path); is_list(Path) ->
+-spec manifest_local_path(term(), smelterl:file_path()) ->
+    {ok, smelterl:file_path()} | skip | {error, term()}.
+manifest_local_path(Path, BasePath) when is_binary(Path); is_list(Path) ->
     try
         PathString = to_list(Path),
-        RelativePath =
-            case filename:pathtype(PathString) of
-                absolute ->
+        case filename:pathtype(PathString) of
+            absolute ->
+                maybe_keep_manifest_local_path(
                     smelterl_file:relativize(
                         to_binary(PathString),
                         BasePath
-                    );
-                _Relative ->
-                    to_binary(PathString)
-            end,
-        {ok, RelativePath}
+                    )
+                );
+            _Relative ->
+                maybe_keep_manifest_local_path(to_binary(PathString))
+        end
     catch
         _Class:_Reason ->
             {error, {relativize_failed, to_binary(Path), BasePath}}
     end;
-relativize_path(Path, BasePath) ->
+manifest_local_path(Path, BasePath) ->
     {error, {relativize_failed, Path, BasePath}}.
+
+-spec maybe_keep_manifest_local_path(smelterl:file_path()) ->
+    {ok, smelterl:file_path()} | skip.
+maybe_keep_manifest_local_path(Path) ->
+    case is_manifest_local_path(Path) of
+        true ->
+            {ok, Path};
+        false ->
+            skip
+    end.
+
+-spec is_manifest_local_path(smelterl:file_path()) -> boolean().
+is_manifest_local_path(Path) ->
+    case binary:split(Path, <<"/">>, [global]) of
+        [<<"legal-info">> | _Rest] ->
+            true;
+        _ ->
+            false
+    end.
 
 -spec append_integrity(term()) -> {ok, term()} | {error, term()}.
 append_integrity({sdk_manifest, Version, Fields}) ->

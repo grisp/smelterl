@@ -15,7 +15,9 @@ planner modules.
 -export([debug/2]).
 -export([error/2]).
 -export([info/2]).
+-export([parse_level/1]).
 -export([warning/2]).
+-export([with_log_level/2]).
 
 
 %=== TYPES =====================================================================
@@ -64,6 +66,38 @@ Debug messages are suppressed unless the configured log level is `debug`.
 debug(Fmt, Args) ->
     maybe_write(debug, Fmt, Args).
 
+-doc """
+Parse one supported log-level token.
+""".
+-spec parse_level(term()) -> {ok, log_level()} | error.
+parse_level(error) ->
+    {ok, error};
+parse_level(warning) ->
+    {ok, warning};
+parse_level(info) ->
+    {ok, info};
+parse_level(debug) ->
+    {ok, debug};
+parse_level(Value) when is_binary(Value) ->
+    parse_level(binary_to_atom(string:lowercase(Value), utf8));
+parse_level(Value) when is_list(Value) ->
+    parse_level(unicode:characters_to_binary(Value));
+parse_level(_Other) ->
+    error.
+
+-doc """
+Run `Fun` with the requested log level and restore the previous level after.
+""".
+-spec with_log_level(log_level(), fun(() -> Result)) -> Result.
+with_log_level(Level, Fun) when is_function(Fun, 0) ->
+    Previous = application:get_env(smelterl, log_level),
+    application:set_env(smelterl, log_level, Level),
+    try
+        Fun()
+    after
+        restore_level(Previous)
+    end.
+
 
 %=== INTERNAL FUNCTIONS ========================================================
 
@@ -84,25 +118,19 @@ should_write(Level) ->
 configured_level() ->
     case application:get_env(smelterl, log_level) of
         {ok, Level} ->
-            case is_log_level(Level) of
-                true -> Level;
-                false -> warning
+            case parse_level(Level) of
+                {ok, ParsedLevel} -> ParsedLevel;
+                error -> warning
             end;
         _ ->
             warning
     end.
 
--spec is_log_level(term()) -> boolean().
-is_log_level(error) ->
-    true;
-is_log_level(warning) ->
-    true;
-is_log_level(info) ->
-    true;
-is_log_level(debug) ->
-    true;
-is_log_level(_Other) ->
-    false.
+-spec restore_level({ok, log_level()} | undefined) -> ok.
+restore_level({ok, Level}) ->
+    application:set_env(smelterl, log_level, Level);
+restore_level(undefined) ->
+    application:unset_env(smelterl, log_level).
 
 -spec level_value(log_level()) -> 0..3.
 level_value(error) ->

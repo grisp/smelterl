@@ -7,6 +7,7 @@
     prepare_seed_builds_deterministic_manifest_seed/1,
     prepare_seed_requires_target_arch_triplet/1,
     build_from_seed_finalizes_manifest_without_buildroot_legal/1,
+    build_from_seed_omits_non_exported_buildroot_license_files/1,
     build_from_seed_finalizes_manifest_with_buildroot_legal/1
 ]).
 
@@ -15,6 +16,7 @@ all() ->
         prepare_seed_builds_deterministic_manifest_seed,
         prepare_seed_requires_target_arch_triplet,
         build_from_seed_finalizes_manifest_without_buildroot_legal,
+        build_from_seed_omits_non_exported_buildroot_license_files,
         build_from_seed_finalizes_manifest_with_buildroot_legal
     ].
 
@@ -375,7 +377,7 @@ prepare_seed_requires_target_arch_triplet(_Config) ->
 build_from_seed_finalizes_manifest_without_buildroot_legal(_Config) ->
     BaseDir = make_temp_dir("smelterl-manifest-finalize"),
     ManifestBase = path_binary(filename:join(BaseDir, "sdk")),
-    {Seed, ExpectedPaths} = sample_manifest_seed(ManifestBase),
+    Seed = sample_manifest_seed_without_export(),
     RuntimeEnv = #{
         host_os => <<"Linux">>,
         host_arch => <<"x86_64">>,
@@ -415,15 +417,13 @@ build_from_seed_finalizes_manifest_without_buildroot_legal(_Config) ->
                 {repository, product_repo},
                 {category, platform},
                 {provides, [secure_boot]},
-                {license, <<"GPL-2.0">>},
-                {license_files, [maps:get(platform_license, ExpectedPaths)]}
+                {license, <<"GPL-2.0">>}
             ]},
             {nugget, demo, [
                 {version, <<"3.4.5">>},
                 {repository, product_repo},
                 {category, feature},
-                {license, <<"Proprietary">>},
-                {license_files, [maps:get(product_license, ExpectedPaths)]}
+                {license, <<"Proprietary">>}
             ]}
         ],
         field_value(nuggets, Fields)
@@ -476,14 +476,84 @@ build_from_seed_finalizes_manifest_without_buildroot_legal(_Config) ->
                 {nugget, platform_core},
                 {name, <<"Crosstool-NG">>},
                 {version, <<"1.25.0">>},
-                {license, <<"GPL-2.0">>},
-                {license_files, [maps:get(component_license, ExpectedPaths)]}
+                {license, <<"GPL-2.0">>}
             ]}
         ],
         field_value(external_components, Fields)
     ),
     assert_missing_field(buildroot_packages, Fields),
     assert_missing_field(buildroot_host_packages, Fields),
+    assert_valid_integrity(Manifest).
+
+build_from_seed_omits_non_exported_buildroot_license_files(_Config) ->
+    BaseDir = make_temp_dir("smelterl-manifest-finalize-buildroot-source"),
+    ManifestBase = path_binary(filename:join(BaseDir, "sdk")),
+    {Seed, _ExpectedPaths} = sample_manifest_seed(ManifestBase),
+    RuntimeEnv = #{
+        host_os => <<"Linux">>,
+        host_arch => <<"x86_64">>,
+        smelterl_version => <<"2.0.0">>,
+        build_date => <<"2026-04-13T12:31:49Z">>
+    },
+    BuildrootLegal = #{
+        path => path_binary(filename:join(BaseDir, "targets/main/workspace/legal-info")),
+        br_version => <<"2025.02.1">>,
+        packages => [
+            #{
+                name => <<"busybox">>,
+                version => <<"1.36.1">>,
+                license => <<"GPL-2.0">>,
+                license_files => [
+                    path_binary(
+                        filename:join(
+                            [BaseDir, "targets", "main", "workspace", "legal-info",
+                             "licenses", "busybox-1.36.1", "LICENSE"]
+                        )
+                    )
+                ]
+            }
+        ],
+        host_packages => [
+            #{
+                name => <<"host-gcc">>,
+                version => <<"13.2.0">>,
+                license => <<"GPL-3.0">>,
+                license_files => [
+                    path_binary(
+                        filename:join(
+                            [BaseDir, "targets", "main", "workspace", "legal-info",
+                             "host-licenses", "host-gcc-13.2.0", "COPYING"]
+                        )
+                    )
+                ]
+            }
+        ]
+    },
+    {ok, Manifest} = smelterl_gen_manifest:build_from_seed(
+        Seed,
+        BuildrootLegal,
+        ManifestBase,
+        RuntimeEnv
+    ),
+    {sdk_manifest, <<"1.0">>, Fields} = Manifest,
+    assert_equal(
+        [
+            {package, <<"busybox">>, [
+                {version, <<"1.36.1">>},
+                {license, <<"GPL-2.0">>}
+            ]}
+        ],
+        field_value(buildroot_packages, Fields)
+    ),
+    assert_equal(
+        [
+            {package, <<"host-gcc">>, [
+                {version, <<"13.2.0">>},
+                {license, <<"GPL-3.0">>}
+            ]}
+        ],
+        field_value(buildroot_host_packages, Fields)
+    ),
     assert_valid_integrity(Manifest).
 
 build_from_seed_finalizes_manifest_with_buildroot_legal(_Config) ->
@@ -748,6 +818,117 @@ sample_manifest_seed(ManifestBase) ->
         product_license => <<"legal-info/alloy-licenses/demo-3.4.5/LICENSE">>,
         component_license => <<"legal-info/alloy-licenses/platform_core-2.0.0/crosstool-ng/COPYING">>
     }}.
+
+sample_manifest_seed_without_export() ->
+    SourceBase = make_temp_dir("smelterl-manifest-seed-sources"),
+    PlatformLicense = path_binary(
+        filename:join(SourceBase, "platform_core/licenses/COPYING")
+    ),
+    ProductLicense = path_binary(
+        filename:join(SourceBase, "demo/licenses/LICENSE")
+    ),
+    #{
+        product => demo,
+        target_arch => <<"arm-buildroot-linux-gnueabihf">>,
+        product_fields => #{
+            name => <<"Demo Product">>,
+            description => <<"Demonstration seed build">>,
+            version => <<"3.4.5">>
+        },
+        repositories => [
+            {smelterl, #{
+                name => <<"smelterl">>,
+                type => git,
+                url => <<"https://github.com/grisp/smelterl.git">>,
+                commit => <<"0123456789abcdef">>,
+                describe => <<"v0.1.0">>,
+                dirty => false
+            }},
+            {product_repo, #{
+                name => <<"demo-repo">>,
+                type => git,
+                url => <<"https://example.com/demo.git">>,
+                commit => <<"feedface">>,
+                describe => <<"v3.4.5">>,
+                dirty => false
+            }}
+        ],
+        nugget_repo_map => #{
+            platform_core => product_repo,
+            demo => product_repo
+        },
+        nuggets => [
+            #{id => platform_core, fields => #{
+                version => <<"2.0.0">>,
+                repository => product_repo,
+                category => platform,
+                provides => [secure_boot],
+                license => <<"GPL-2.0">>,
+                license_files => [PlatformLicense]
+            }},
+            #{id => demo, fields => #{
+                version => <<"3.4.5">>,
+                repository => product_repo,
+                category => feature,
+                license => <<"Proprietary">>,
+                license_files => [ProductLicense]
+            }}
+        ],
+        auxiliary_products => [
+            #{
+                id => aux_alpha,
+                root_nugget => aux_root,
+                constraints => [{flavor, encrypted}]
+            }
+        ],
+        capabilities => #{
+            firmware_variants => [plain, secure],
+            selectable_outputs => [fwup_firmware],
+            firmware_parameters => [
+                #{
+                    id => serial_number,
+                    type => string,
+                    required => true,
+                    name => <<"Serial Number">>
+                }
+            ]
+        },
+        sdk_outputs => [
+            #{
+                target => main,
+                outputs => [
+                    #{
+                        id => debug_symbols,
+                        nugget => demo,
+                        name => <<"Debug symbols">>,
+                        description => <<"Main-target symbols">>
+                    }
+                ]
+            },
+            #{
+                target => aux_alpha,
+                outputs => [
+                    #{
+                        id => initramfs,
+                        nugget => aux_root,
+                        name => <<"Encrypted initramfs">>,
+                        description => <<"Auxiliary payload">>
+                    }
+                ]
+            }
+        ],
+        external_components => [
+            #{
+                id => crosstool_ng,
+                nugget => platform_core,
+                name => <<"Crosstool-NG">>,
+                version => <<"1.25.0">>,
+                license => <<"GPL-2.0">>,
+                license_files => [<<"licenses/THIRD_PARTY.txt">>]
+            }
+        ],
+        smelterl_repository => smelterl
+    }.
 
 absolute_child(Base, RelativeParts) ->
     path_binary(
