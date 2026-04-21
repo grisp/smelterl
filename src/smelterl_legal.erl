@@ -19,6 +19,7 @@ time. `export_legal/3` is the export-only wrapper over that shared path.
 -export([parse_legal/1]).
 -export([collect_legal/3]).
 -export([export_legal/3]).
+-export([export_alloy/5]).
 
 
 %=== API FUNCTIONS =============================================================
@@ -115,6 +116,50 @@ export_legal(BuildrootPaths, ExportDir, IncludeSources) ->
     case collect_legal(BuildrootPaths, ExportDir, IncludeSources) of
         {ok, _LegalInfo} ->
             ok;
+        {error, _} = Error ->
+            Error
+    end.
+
+-doc """
+Export alloy-specific legal metadata and rewrite manifest seed license paths to
+the exported tree.
+""".
+-spec export_alloy(
+    smelterl:manifest_seed(),
+    smelterl:build_target(),
+    #{binary() => binary()},
+    smelterl:file_path(),
+    boolean()
+) ->
+    {ok, smelterl:manifest_seed()} | {error, term()}.
+export_alloy(ManifestSeed0, Target, ExtraConfig, ExportDir, IncludeSources) ->
+    AbsoluteExportDir = absolute_binary_path(ExportDir),
+    maybe
+        {ok, Nuggets, NuggetRows} ?= export_alloy_nuggets(
+            maps:get(nuggets, ManifestSeed0, []),
+            Target,
+            AbsoluteExportDir,
+            IncludeSources
+        ),
+        {ok, Components, ComponentRows} ?= export_alloy_components(
+            maps:get(external_components, ManifestSeed0, []),
+            Target,
+            ExtraConfig,
+            AbsoluteExportDir,
+            IncludeSources
+        ),
+        ok ?= write_alloy_manifest(
+            join_os_path(AbsoluteExportDir, <<"alloy-manifest.csv">>),
+            NuggetRows ++ ComponentRows
+        ),
+        ok ?= append_alloy_readme(AbsoluteExportDir, IncludeSources),
+        ok ?= write_sha256(AbsoluteExportDir),
+        {ok,
+            ManifestSeed0#{
+                nuggets := Nuggets,
+                external_components := Components
+            }}
+    else
         {error, _} = Error ->
             Error
     end.
@@ -772,6 +817,557 @@ write_readme(Path, Inputs, IncludeSources) ->
         include_sources => IncludeSources
     },
     smelterl_template:render_to_file(legal_readme, Data, Path).
+
+-spec export_alloy_nuggets(
+    [map()],
+    smelterl:build_target(),
+    smelterl:file_path(),
+    boolean()
+) -> {ok, [map()], [map()]} | {error, term()}.
+export_alloy_nuggets(Nuggets, Target, ExportDir, IncludeSources) ->
+    export_alloy_nuggets(Nuggets, Target, ExportDir, IncludeSources, [], []).
+
+export_alloy_nuggets([], _Target, _ExportDir, _IncludeSources, NuggetAcc, RowAcc) ->
+    {ok, lists:reverse(NuggetAcc), lists:reverse(RowAcc)};
+export_alloy_nuggets(
+    [#{id := NuggetId, fields := Fields0} = NuggetEntry | Rest],
+    Target,
+    ExportDir,
+    IncludeSources,
+    NuggetAcc,
+    RowAcc
+) ->
+    maybe
+        {ok, NuggetDir} ?= target_nugget_dir(NuggetId, Target),
+        NuggetKey = artifact_key(NuggetId, maps:get(version, Fields0, undefined)),
+        {ok, LicenseFiles} ?= export_license_files(
+            maps:get(license_files, Fields0, []),
+            ExportDir,
+            join_relative_path(<<"alloy-licenses">>, NuggetKey)
+        ),
+        {ok, SourcePath} ?= maybe_export_nugget_source(
+            IncludeSources,
+            NuggetDir,
+            ExportDir,
+            join_relative_path(<<"alloy-sources">>, NuggetKey)
+        ),
+        Fields = maps:put(license_files, LicenseFiles, Fields0),
+        Row = alloy_manifest_row(
+            atom_binary(NuggetId),
+            maps:get(version, Fields0, undefined),
+            maps:get(license, Fields0, undefined),
+            relativize_export_paths(LicenseFiles, ExportDir),
+            SourcePath
+        ),
+        export_alloy_nuggets(
+            Rest,
+            Target,
+            ExportDir,
+            IncludeSources,
+            [NuggetEntry#{fields := Fields} | NuggetAcc],
+            [Row | RowAcc]
+        )
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec export_alloy_components(
+    [map()],
+    smelterl:build_target(),
+    #{binary() => binary()},
+    smelterl:file_path(),
+    boolean()
+) -> {ok, [map()], [map()]} | {error, term()}.
+export_alloy_components(Components, Target, ExtraConfig, ExportDir, IncludeSources) ->
+    export_alloy_components(
+        Components,
+        Target,
+        ExtraConfig,
+        ExportDir,
+        IncludeSources,
+        [],
+        []
+    ).
+
+export_alloy_components(
+    [],
+    _Target,
+    _ExtraConfig,
+    _ExportDir,
+    _IncludeSources,
+    ComponentAcc,
+    RowAcc
+) ->
+    {ok, lists:reverse(ComponentAcc), lists:reverse(RowAcc)};
+export_alloy_components(
+    [Component0 | Rest],
+    Target,
+    ExtraConfig,
+    ExportDir,
+    IncludeSources,
+    ComponentAcc,
+    RowAcc
+) ->
+    maybe
+        NuggetId = maps:get(nugget, Component0),
+        {ok, NuggetDir} ?= target_nugget_dir(NuggetId, Target),
+        {ok, NuggetVersion} ?= target_nugget_version(NuggetId, Target),
+        ComponentKey = artifact_key(maps:get(id, Component0), maps:get(version, Component0, undefined)),
+        LicenseSources = [
+            resolve_declared_path(Path, NuggetDir)
+         || Path <- maps:get(license_files, Component0, [])
+        ],
+        {ok, LicenseFiles} ?= export_license_files(
+            LicenseSources,
+            ExportDir,
+            join_relative_path(
+                join_relative_path(
+                    <<"alloy-licenses">>,
+                    artifact_key(NuggetId, NuggetVersion)
+                ),
+                ComponentKey
+            )
+        ),
+        {ok, SourcePath} ?= maybe_export_component_source(
+            IncludeSources,
+            Component0,
+            NuggetDir,
+            source_resolution_context(Target, ExtraConfig),
+            ExportDir,
+            join_relative_path(
+                join_relative_path(
+                    <<"alloy-sources">>,
+                    artifact_key(NuggetId, NuggetVersion)
+                ),
+                ComponentKey
+            )
+        ),
+        Component = maps:put(license_files, LicenseFiles, Component0),
+        Row = alloy_manifest_row(
+            atom_binary(maps:get(id, Component0)),
+            maps:get(version, Component0, undefined),
+            maps:get(license, Component0, undefined),
+            relativize_export_paths(LicenseFiles, ExportDir),
+            SourcePath
+        ),
+        export_alloy_components(
+            Rest,
+            Target,
+            ExtraConfig,
+            ExportDir,
+            IncludeSources,
+            [Component | ComponentAcc],
+            [Row | RowAcc]
+        )
+    else
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec maybe_export_nugget_source(
+    boolean(),
+    smelterl:file_path(),
+    smelterl:file_path(),
+    smelterl:file_path()
+) -> {ok, binary() | undefined} | {error, term()}.
+maybe_export_nugget_source(false, _NuggetDir, _ExportDir, _RelativeDest) ->
+    {ok, undefined};
+maybe_export_nugget_source(true, NuggetDir, ExportDir, RelativeDest) ->
+    case copy_source_item(NuggetDir, ExportDir, RelativeDest) of
+        {ok, RelativePath} ->
+            {ok, RelativePath};
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec maybe_export_component_source(
+    boolean(),
+    map(),
+    smelterl:file_path(),
+    smelterl:config(),
+    smelterl:file_path(),
+    smelterl:file_path()
+) -> {ok, binary() | undefined} | {error, term()}.
+maybe_export_component_source(
+    false,
+    _Component,
+    _NuggetDir,
+    _Context,
+    _ExportDir,
+    _RelativeDest
+) ->
+    {ok, undefined};
+maybe_export_component_source(
+    true,
+    Component,
+    NuggetDir,
+    Context,
+    ExportDir,
+    RelativeDest
+) ->
+    case resolve_component_source(Component, NuggetDir, Context) of
+        {ok, undefined} ->
+            {ok, undefined};
+        {ok, SourcePath} ->
+            copy_source_item(SourcePath, ExportDir, RelativeDest);
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec export_license_files(
+    [smelterl:file_path()],
+    smelterl:file_path(),
+    smelterl:file_path()
+) -> {ok, [smelterl:file_path()]} | {error, term()}.
+export_license_files(LicenseFiles, ExportDir, RelativeBase) ->
+    export_license_files(LicenseFiles, ExportDir, RelativeBase, []).
+
+export_license_files([], _ExportDir, _RelativeBase, Acc) ->
+    {ok, lists:reverse(Acc)};
+export_license_files([Source | Rest], ExportDir, RelativeBase, Acc) ->
+    RelativePath = join_relative_path(RelativeBase, path_basename(Source)),
+    AbsolutePath = join_os_path(ExportDir, RelativePath),
+    case copy_file_with_validation(Source, AbsolutePath) of
+        ok ->
+            export_license_files(Rest, ExportDir, RelativeBase, [AbsolutePath | Acc]);
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec write_alloy_manifest(smelterl:file_path(), [map()]) -> ok | {error, term()}.
+write_alloy_manifest(Path, Rows) ->
+    Header = render_csv_row([
+        <<"PACKAGE">>,
+        <<"VERSION">>,
+        <<"LICENSE">>,
+        <<"LICENSE FILES">>,
+        <<"SOURCE ARCHIVE">>,
+        <<"SOURCE SITE">>
+    ]),
+    Content = [
+        Header,
+        [
+            render_csv_row([
+                maps:get(package, Row, <<>>),
+                maps:get(version, Row, <<>>),
+                maps:get(license, Row, <<>>),
+                join_csv_license_files(maps:get(license_files, Row, [])),
+                maps:get(source_archive, Row, <<>>),
+                <<>>
+            ])
+         || Row <- Rows
+        ]
+    ],
+    smelterl_file:write_iodata(Path, Content).
+
+-spec alloy_manifest_row(
+    binary(),
+    binary() | undefined,
+    binary() | undefined,
+    [binary()],
+    binary() | undefined
+) -> map().
+alloy_manifest_row(Package, Version, License, LicenseFiles, SourcePath) ->
+    #{
+        package => Package,
+        version => optional_binary_value(Version),
+        license => optional_binary_value(License),
+        license_files => LicenseFiles,
+        source_archive => optional_binary_value(SourcePath)
+    }.
+
+-spec append_alloy_readme(smelterl:file_path(), boolean()) -> ok | {error, term()}.
+append_alloy_readme(ExportDir, IncludeSources) ->
+    ReadmePath = join_os_path(ExportDir, <<"README">>),
+    case file:read_file(binary_to_list(ReadmePath)) of
+        {ok, Content} ->
+            Suffix = alloy_readme_suffix(IncludeSources),
+            case file:write_file(binary_to_list(ReadmePath), <<Content/binary, Suffix/binary>>) of
+                ok ->
+                    ok;
+                {error, Posix} ->
+                    {error, {copy_failed, ReadmePath, ReadmePath, Posix}}
+            end;
+        {error, Posix} ->
+            {error, {copy_failed, ReadmePath, ReadmePath, Posix}}
+    end.
+
+-spec alloy_readme_suffix(boolean()) -> binary().
+alloy_readme_suffix(true) ->
+    <<"\nAlloy-specific additions in this export:\n"
+      "- `alloy-manifest.csv` with nugget and external component metadata\n"
+      "- `alloy-licenses/` with nugget and external component license texts\n"
+      "- `alloy-sources/` with exported nugget and external component sources\n">>;
+alloy_readme_suffix(false) ->
+    <<"\nAlloy-specific additions in this export:\n"
+      "- `alloy-manifest.csv` with nugget and external component metadata\n"
+      "- `alloy-licenses/` with nugget and external component license texts\n">>.
+
+-spec source_resolution_context(
+    smelterl:build_target(),
+    #{binary() => binary()}
+) -> smelterl:config().
+source_resolution_context(Target, ExtraConfig) ->
+    maps:merge(
+        maps:from_list(
+            [
+                {Key, {extra, undefined, Value}}
+             || {Key, Value} <- maps:to_list(ExtraConfig)
+            ]
+        ),
+        maps:get(config, Target, #{})
+    ).
+
+-spec resolve_component_source(map(), smelterl:file_path(), smelterl:config()) ->
+    {ok, smelterl:file_path() | undefined} | {error, term()}.
+resolve_component_source(Component, NuggetDir, Context) ->
+    case {maps:get(source_dir, Component, undefined), maps:get(source_archive, Component, undefined)} of
+        {undefined, undefined} ->
+            {ok, undefined};
+        {SourceDir, undefined} ->
+            resolve_source_spec(SourceDir, NuggetDir, Context);
+        {undefined, SourceArchive} ->
+            resolve_source_spec(SourceArchive, NuggetDir, Context);
+        _ ->
+            {error, {invalid_component_source, maps:get(id, Component)}}
+    end.
+
+-spec resolve_source_spec(term(), smelterl:file_path(), smelterl:config()) ->
+    {ok, smelterl:file_path()} | {error, term()}.
+resolve_source_spec({path, PathSpec}, NuggetDir, _Context) ->
+    {ok, resolve_declared_path(PathSpec, NuggetDir)};
+resolve_source_spec({computed, Template}, NuggetDir, Context) ->
+    maybe
+        {ok, RawPath} ?= smelterl_template:substitute(Template, Context),
+        {ok, Expanded} ?= expand_env_refs(RawPath),
+        {ok, resolve_declared_path(Expanded, NuggetDir)}
+    else
+        {error, _} = Error ->
+            Error
+    end;
+resolve_source_spec({exec, ScriptPath}, NuggetDir, Context) ->
+    maybe
+        {ok, RawPath} ?= run_source_script(ScriptPath, NuggetDir, Context),
+        {ok, Expanded} ?= expand_env_refs(RawPath),
+        {ok, resolve_declared_path(Expanded, NuggetDir)}
+    else
+        {error, _} = Error ->
+            Error
+    end;
+resolve_source_spec(Path, NuggetDir, _Context) when is_binary(Path); is_list(Path) ->
+    {ok, resolve_declared_path(Path, NuggetDir)};
+resolve_source_spec(Spec, _NuggetDir, _Context) ->
+    {error, {invalid_source_spec, Spec}}.
+
+-spec run_source_script(binary(), smelterl:file_path(), smelterl:config()) ->
+    {ok, binary()} | {error, term()}.
+run_source_script(ScriptPath, NuggetDir, Context) ->
+    Script = resolve_declared_path(ScriptPath, NuggetDir),
+    case filelib:is_regular(binary_to_list(Script)) of
+        false ->
+            {error, {script_not_found, Script}};
+        true ->
+            Port =
+                open_port(
+                    {spawn_executable, binary_to_list(Script)},
+                    [
+                        binary,
+                        exit_status,
+                        stderr_to_stdout,
+                        use_stdio,
+                        hide,
+                        {cd, binary_to_list(NuggetDir)},
+                        {env, context_env_pairs(Context)}
+                    ]
+                ),
+            collect_script_output(Port, [])
+    end.
+
+-spec collect_script_output(port(), [binary()]) -> {ok, binary()} | {error, term()}.
+collect_script_output(Port, Acc) ->
+    receive
+        {Port, {data, Data}} ->
+            collect_script_output(Port, [Data | Acc]);
+        {Port, {exit_status, 0}} ->
+            {ok, unicode:characters_to_binary(string:trim(iolist_to_binary(lists:reverse(Acc))))};
+        {Port, {exit_status, Status}} ->
+            {error, {exit_non_zero, Status, iolist_to_binary(lists:reverse(Acc))}}
+    end.
+
+-spec context_env_pairs(smelterl:config()) -> [{string(), string()}].
+context_env_pairs(Context) ->
+    [
+        {binary_to_list(Key), binary_to_list(context_value(Value))}
+     || {Key, Value} <- maps:to_list(Context)
+    ].
+
+-spec context_value(term()) -> binary().
+context_value({_Kind, _Origin, Value}) when is_binary(Value) ->
+    Value;
+context_value(Value) when is_binary(Value) ->
+    Value;
+context_value(Value) ->
+    unicode:characters_to_binary(io_lib:format("~tp", [Value])).
+
+-spec expand_env_refs(binary()) -> {ok, binary()} | {error, term()}.
+expand_env_refs(Value) ->
+    expand_env_refs(Value, []).
+
+expand_env_refs(<<>>, Acc) ->
+    {ok, iolist_to_binary(lists:reverse(Acc))};
+expand_env_refs(<<"${", Rest/binary>>, Acc) ->
+    case binary:match(Rest, <<"}">>) of
+        nomatch ->
+            {error, {invalid_env_syntax, <<"${", Rest/binary>>}};
+        {EndPos, _} ->
+            VarName = binary:part(Rest, 0, EndPos),
+            Remaining = binary:part(Rest, EndPos + 1, byte_size(Rest) - EndPos - 1),
+            case os:getenv(binary_to_list(VarName)) of
+                false ->
+                    {error, {unresolved_variable, VarName}};
+                EnvValue ->
+                    expand_env_refs(Remaining, [EnvValue | Acc])
+            end
+    end;
+expand_env_refs(<<"$", Char, Rest/binary>>, Acc)
+  when
+    (Char >= $A andalso Char =< $Z) orelse
+    (Char >= $a andalso Char =< $z) orelse
+    Char =:= $_
+->
+    {VarChars, Remaining} = take_env_name(Rest, [Char]),
+    VarName = iolist_to_binary(lists:reverse(VarChars)),
+    case os:getenv(binary_to_list(VarName)) of
+        false ->
+            {error, {unresolved_variable, VarName}};
+        EnvValue ->
+            expand_env_refs(Remaining, [EnvValue | Acc])
+    end;
+expand_env_refs(<<Char/utf8, Rest/binary>>, Acc) ->
+    expand_env_refs(Rest, [<<Char/utf8>> | Acc]).
+
+take_env_name(<<Char, Rest/binary>>, Acc)
+  when
+    (Char >= $A andalso Char =< $Z) orelse
+    (Char >= $a andalso Char =< $z) orelse
+    (Char >= $0 andalso Char =< $9) orelse
+    Char =:= $_
+->
+    take_env_name(Rest, [Char | Acc]);
+take_env_name(Rest, Acc) ->
+    {Acc, Rest}.
+
+-spec resolve_declared_path(smelterl:file_path() | string(), smelterl:file_path()) ->
+    smelterl:file_path().
+resolve_declared_path(Path, BaseDir) ->
+    PathBinary = path_to_binary(Path),
+    case filename:pathtype(binary_to_list(PathBinary)) of
+        absolute ->
+            absolute_binary_path(PathBinary);
+        _ ->
+            absolute_binary_path(join_os_path(BaseDir, PathBinary))
+    end.
+
+-spec copy_source_item(
+    smelterl:file_path(),
+    smelterl:file_path(),
+    smelterl:file_path()
+) -> {ok, binary()} | {error, term()}.
+copy_source_item(SourcePath, ExportDir, RelativeDest) ->
+    case file:read_file_info(binary_to_list(SourcePath)) of
+        {ok, #file_info{type = directory}} ->
+            case copy_tree(SourcePath, join_os_path(ExportDir, RelativeDest)) of
+                ok ->
+                    {ok, RelativeDest};
+                {error, _} = Error ->
+                    Error
+            end;
+        {ok, #file_info{type = regular}} ->
+            RelativeFile =
+                join_relative_path(RelativeDest, path_basename(SourcePath)),
+            AbsoluteFile = join_os_path(ExportDir, RelativeFile),
+            case copy_file_with_validation(SourcePath, AbsoluteFile) of
+                ok ->
+                    {ok, RelativeFile};
+                {error, _} = Error ->
+                    Error
+            end;
+        {ok, _Info} ->
+            {error, {invalid_source_path, SourcePath}};
+        {error, Posix} ->
+            {error, {copy_failed, SourcePath, join_os_path(ExportDir, RelativeDest), Posix}}
+    end.
+
+-spec target_nugget_dir(smelterl:nugget_id(), smelterl:build_target()) ->
+    {ok, smelterl:file_path()} | {error, term()}.
+target_nugget_dir(NuggetId, Target) ->
+    case lookup_target_nugget(NuggetId, Target) of
+        {ok, Nugget} ->
+            {ok,
+                resolve_declared_path(
+                    maps:get(nugget_relpath, Nugget, <<>>),
+                    maps:get(repo_path, Nugget)
+                )};
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec target_nugget_version(smelterl:nugget_id(), smelterl:build_target()) ->
+    {ok, binary() | undefined} | {error, term()}.
+target_nugget_version(NuggetId, Target) ->
+    case lookup_target_nugget(NuggetId, Target) of
+        {ok, Nugget} ->
+            {ok, maps:get(version, Nugget, undefined)};
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec lookup_target_nugget(smelterl:nugget_id(), smelterl:build_target()) ->
+    {ok, map()} | {error, term()}.
+lookup_target_nugget(NuggetId, Target) ->
+    case maps:get(NuggetId, maps:get(motherlode, Target, #{}), undefined) of
+        undefined ->
+            case maps:get(NuggetId, maps:get(nuggets, maps:get(motherlode, Target, #{}), #{}), undefined) of
+                undefined ->
+                    {error, {unknown_nugget, NuggetId}};
+                Nugget ->
+                    {ok, Nugget}
+            end;
+        Nugget ->
+            {ok, Nugget}
+    end.
+
+-spec relativize_export_paths([smelterl:file_path()], smelterl:file_path()) -> [binary()].
+relativize_export_paths(Paths, ExportDir) ->
+    [
+        smelterl_file:relativize(Path, ExportDir)
+     || Path <- Paths
+    ].
+
+-spec path_basename(smelterl:file_path()) -> binary().
+path_basename(Path) ->
+    unicode:characters_to_binary(filename:basename(binary_to_list(Path))).
+
+-spec artifact_key(atom(), binary() | undefined) -> binary().
+artifact_key(Name, undefined) ->
+    atom_binary(Name);
+artifact_key(Name, <<>>) ->
+    atom_binary(Name);
+artifact_key(Name, Version) when is_atom(Name) ->
+    <<(atom_binary(Name))/binary, "-", Version/binary>>;
+artifact_key(Name, Version) when is_binary(Name) ->
+    <<Name/binary, "-", Version/binary>>.
+
+-spec atom_binary(atom()) -> binary().
+atom_binary(Value) ->
+    atom_to_binary(Value, utf8).
+
+-spec optional_binary_value(binary() | undefined) -> binary().
+optional_binary_value(undefined) ->
+    <<>>;
+optional_binary_value(Value) ->
+    path_to_binary(Value).
 
 -spec ensure_trailing_newline(binary()) -> binary().
 ensure_trailing_newline(<<>>) ->

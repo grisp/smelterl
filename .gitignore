@@ -20,6 +20,7 @@ _build
 .idea
 rebar3.crashdump
 doc
+priv/build_info.term
 
 # asdf
 .tool-versions

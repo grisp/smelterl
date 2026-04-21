@@ -8,6 +8,15 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added build-time asset packaging for the `smelterl` escript: generated
+  `priv/build_info.term`, archive-aware `priv/` loading helpers, a post-build
+  embed step for `priv/`, and Common Test coverage proving a relocated
+  escript still reads templates, defconfig-key metadata, and build-info from
+  its embedded archive.
+- Added Alloy-specific legal export support to `smelterl_legal`, including
+  `alloy-manifest.csv`, exported nugget/component license files, optional
+  source export for nugget and external-component payloads, and focused
+  Common Test coverage for the exported legal tree contents.
 - Added `smelterl_plan_generate_SUITE` with end-to-end Common Test coverage for
   one main-plus-auxiliary sample, including a regression that proves
   `smelterl generate` keeps using the serialized build plan after the original
@@ -113,6 +122,19 @@ and this project adheres to Semantic Versioning.
   coverage for `plan` option validation and stderr/status behavior.
 
 ### Changed
+- Updated `smelterl plan` and `smelterl generate` to honor `--log`,
+  `--verbose`, and `--debug` consistently, emitting staged progress messages
+  and debug detail through `smelterl_log` while restoring the previous
+  application log level after command execution.
+- Updated template, build-info, and defconfig-key loading to go through
+  application-priv readers instead of checkout-relative path fallback, so the
+  same runtime code works for direct test execution and for the packaged
+  escript archive.
+- Updated generated Buildroot path handling so `Config.in` now uses the
+  Kconfig/Buildroot environment-path form `"$ALLOY_MOTHERLODE/..."`, while
+  defconfig keeps the existing `${ALLOY_MOTHERLODE}` runtime-variable
+  convention and the manifest drops `license_files` entries that would
+  otherwise leak non-exported build-tree legal paths.
 - Updated auxiliary target planning so effective auxiliary trees now connect
   the auxiliary root to the shared builder/toolchain/platform/system backbone,
   allowing topology-driven generate outputs to include the shared target

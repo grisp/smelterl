@@ -226,9 +226,9 @@ source_path(Nugget, RelativePath) ->
     RelativeBinary = to_binary(RelativePath),
     case NuggetRelPath of
         <<".">> ->
-            <<"$(ALLOY_MOTHERLODE)/", RepoName/binary, "/", RelativeBinary/binary>>;
+            <<"$ALLOY_MOTHERLODE/", RepoName/binary, "/", RelativeBinary/binary>>;
         _ ->
-            <<"$(ALLOY_MOTHERLODE)/", RepoName/binary, "/", NuggetRelPath/binary, "/",
+            <<"$ALLOY_MOTHERLODE/", RepoName/binary, "/", NuggetRelPath/binary, "/",
               RelativeBinary/binary>>
     end.
 

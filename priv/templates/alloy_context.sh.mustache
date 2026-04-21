@@ -19,6 +19,7 @@
 {{#product_vars}}
 export {{name}}={{{value}}}
 {{/product_vars}}
+
 {{#main}}
 ## Firmware Variants ##
 
@@ -49,6 +50,7 @@ export {{name}}={{{value}}}
 {{/global_config_vars}}
 {{/has_global_config}}
 {{/has_any_config}}
+
 ## Registries ##
 
 ALLOY_NUGGET_ORDER=({{{nugget_order_items}}})
@@ -91,6 +93,7 @@ export {{name}}={{{value}}}
 {{/vars}}
 {{/firmware_parameters}}
 {{/main}}
+
 ## SDK Outputs ##
 
 export ALLOY_SDK_OUTPUTS=({{{sdk_outputs_items}}})
@@ -99,6 +102,7 @@ export ALLOY_SDK_OUTPUTS=({{{sdk_outputs_items}}})
 export {{name}}={{{value}}}
 {{/vars}}
 {{/sdk_outputs}}
+
 ## Helper Functions ##
 
 alloy_nugget_dir() { local n="${1^^}"; n="${n//-/_}"; local v="ALLOY_NUGGET_${n}_DIR"; printf '%s\n' "${!v-}"; }

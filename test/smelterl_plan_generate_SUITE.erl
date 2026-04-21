@@ -5,13 +5,15 @@
 -export([all/0]).
 -export([
     plan_then_generate_main_and_auxiliary_from_sample_motherlode/1,
-    generate_uses_serialized_plan_after_motherlode_mutation/1
+    generate_uses_serialized_plan_after_motherlode_mutation/1,
+    escriptized_plan_uses_embedded_priv/1
 ]).
 
 all() ->
     [
         plan_then_generate_main_and_auxiliary_from_sample_motherlode,
-        generate_uses_serialized_plan_after_motherlode_mutation
+        generate_uses_serialized_plan_after_motherlode_mutation,
+        escriptized_plan_uses_embedded_priv
     ].
 
 plan_then_generate_main_and_auxiliary_from_sample_motherlode(_Config) ->
@@ -76,13 +78,13 @@ plan_then_generate_main_and_auxiliary_from_sample_motherlode(_Config) ->
         [
             <<"config ALLOY_MOTHERLODE">>,
             <<"config ALLOY_BUILD_DIR">>,
-            <<"source \"$(ALLOY_MOTHERLODE)/builtin/platform_core/buildroot/Config.in\"">>,
-            <<"source \"$(ALLOY_MOTHERLODE)/builtin/aux_alpha_root/packages/aux_pkg/Config.in\"">>
+            <<"source \"$ALLOY_MOTHERLODE/builtin/platform_core/buildroot/Config.in\"">>,
+            <<"source \"$ALLOY_MOTHERLODE/builtin/aux_alpha_root/packages/aux_pkg/Config.in\"">>
         ]
     ),
     assert_not_contains(
         read_file(AuxConfigIn),
-        <<"$(ALLOY_MOTHERLODE)/builtin/demo/packages/app_pkg/Config.in">>
+        <<"$ALLOY_MOTHERLODE/builtin/demo/packages/app_pkg/Config.in">>
     ),
     assert_file_contains(
         AuxExternalMk,
@@ -148,13 +150,13 @@ plan_then_generate_main_and_auxiliary_from_sample_motherlode(_Config) ->
         [
             <<"config ALLOY_MOTHERLODE">>,
             <<"config ALLOY_BUILD_DIR">>,
-            <<"source \"$(ALLOY_MOTHERLODE)/builtin/platform_core/buildroot/Config.in\"">>,
-            <<"source \"$(ALLOY_MOTHERLODE)/builtin/demo/packages/app_pkg/Config.in\"">>
+            <<"source \"$ALLOY_MOTHERLODE/builtin/platform_core/buildroot/Config.in\"">>,
+            <<"source \"$ALLOY_MOTHERLODE/builtin/demo/packages/app_pkg/Config.in\"">>
         ]
     ),
     assert_not_contains(
         read_file(MainConfigIn),
-        <<"$(ALLOY_MOTHERLODE)/builtin/aux_alpha_root/packages/aux_pkg/Config.in">>
+        <<"$ALLOY_MOTHERLODE/builtin/aux_alpha_root/packages/aux_pkg/Config.in">>
     ),
     assert_file_contains(
         MainExternalMk,
@@ -283,10 +285,51 @@ generate_uses_serialized_plan_after_motherlode_mutation(_Config) ->
     assert_bash_syntax(Context),
     assert_context_sources_in_bash(Context, <<"demo">>, <<"device_name">>, <<"demo-box">>).
 
+escriptized_plan_uses_embedded_priv(_Config) ->
+    RootDir = project_root(),
+    Fixture = write_sample_motherlode("smelterl-escript-plan-sample"),
+    OutputDir = make_temp_dir("smelterl-escript-plan-output"),
+    PlanPath = filename:join(OutputDir, "build_plan.term"),
+    ok = ensure_escriptized_binary(RootDir),
+    EscriptPath = filename:join([RootDir, "_build", "default", "bin", "smelterl"]),
+    assert_escript_contains(
+        EscriptPath,
+        [
+            <<"smelterl/priv/templates/external.desc.mustache">>,
+            <<"smelterl/priv/defconfig-keys.spec">>,
+            <<"smelterl/priv/build_info.term">>
+        ]
+    ),
+    RelocatedDir = make_temp_dir("smelterl-escript-relocated"),
+    RelocatedEscript = filename:join(RelocatedDir, "smelterl"),
+    {ok, _Bytes} = file:copy(EscriptPath, RelocatedEscript),
+    ok = file:change_mode(RelocatedEscript, 8#755),
+    {Status, Output} = run_executable(
+        RelocatedEscript,
+        [
+            "plan",
+            "--product", "demo",
+            "--motherlode", maps:get(motherlode_dir, Fixture),
+            "--output-plan", PlanPath
+        ],
+        RelocatedDir
+    ),
+    assert_command_success(Status, Output),
+    case filelib:is_file(PlanPath) of
+        true -> ok;
+        false -> ct:fail("Expected plan output at ~ts", [PlanPath])
+    end.
+
 run_main(Argv) ->
     ScriptDir = filename:dirname(code:which(?MODULE)),
     SmelterlEbin = filename:join(filename:dirname(ScriptDir), "ebin"),
-    Eval = io_lib:format("halt(smelterl:main(~tp)).", [Argv]),
+    PrivDir = source_priv_dir(),
+    Eval = io_lib:format(
+        "application:load(smelterl), "
+        "application:set_env(smelterl, priv_dir, ~tp), "
+        "halt(smelterl:main(~tp)).",
+        [PrivDir, Argv]
+    ),
     Port =
         open_port(
             {spawn_executable, os:find_executable("erl")},
@@ -307,6 +350,79 @@ collect_port_output(Port, Acc) ->
         {Port, {exit_status, Status}} ->
             {Status, iolist_to_binary(lists:reverse(Acc))}
     end.
+
+assert_escript_contains(EscriptPath, ExpectedEntries) ->
+    {ok, SourceBinary} = file:read_file(EscriptPath),
+    {ok, _Header, Archive} = split_escript(SourceBinary),
+    WorkDir = make_temp_dir("smelterl-escript-archive"),
+    ArchivePath = filename:join(WorkDir, "archive.zip"),
+    ok = file:write_file(ArchivePath, Archive),
+    {ok, Files} = zip:extract(ArchivePath, [memory]),
+    EntrySet = maps:from_list([
+        {unicode:characters_to_binary(Name), true}
+     || {Name, _Content} <- Files
+    ]),
+    lists:foreach(
+        fun(ExpectedEntry) ->
+            case maps:is_key(ExpectedEntry, EntrySet) of
+                true ->
+                    ok;
+                false ->
+                    ct:fail("Expected escript archive to contain ~ts", [ExpectedEntry])
+            end
+        end,
+        ExpectedEntries
+    ).
+
+split_escript(Binary) ->
+    case binary:match(Binary, <<80, 75, 3, 4>>) of
+        {Start, _Length} ->
+            {ok,
+                binary:part(Binary, 0, Start),
+                binary:part(Binary, Start, byte_size(Binary) - Start)};
+        nomatch ->
+            {error, missing_zip_archive}
+    end.
+
+run_executable(Executable, Args, WorkingDir) ->
+    Port =
+        open_port(
+            {spawn_executable, Executable},
+            [
+                binary,
+                exit_status,
+                stderr_to_stdout,
+                use_stdio,
+                {cd, WorkingDir},
+                {args, Args}
+            ]
+        ),
+    collect_port_output(Port, []).
+
+ensure_escriptized_binary(RootDir) ->
+    case os:find_executable("rebar3") of
+        false ->
+            ct:fail("rebar3 executable not found on PATH");
+        Rebar3 ->
+            {Status, Output} = run_executable(
+                Rebar3,
+                ["as", "default", "escriptize"],
+                RootDir
+            ),
+            assert_status_zero(Status, Output)
+    end.
+
+project_root() ->
+    TestDir = filename:dirname(code:which(?MODULE)),
+    ascend(TestDir, 5).
+
+source_priv_dir() ->
+    filename:join(project_root(), "priv").
+
+ascend(Path, 0) ->
+    Path;
+ascend(Path, Levels) when Levels > 0 ->
+    ascend(filename:dirname(Path), Levels - 1).
 
 write_sample_motherlode(Prefix) ->
     MotherlodeDir = make_temp_dir(Prefix),
@@ -565,6 +681,14 @@ assert_command_success(Status, Output) ->
             ct:fail("Expected successful command, got status ~tp with output ~ts", [
                 Status, Output
             ])
+    end.
+
+assert_status_zero(Status, Output) ->
+    case Status of
+        0 ->
+            ok;
+        _ ->
+            ct:fail("Expected status 0, got ~tp with output ~ts", [Status, Output])
     end.
 
 assert_bash_syntax(Path) ->

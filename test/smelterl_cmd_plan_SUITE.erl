@@ -18,7 +18,8 @@
     plan_warns_for_multiple_missing_registries_in_sorted_order/1,
     plan_reports_invalid_motherlode_path/1,
     plan_rejects_unknown_argument/1,
-    valid_plan_args_write_build_plan_term/1
+    valid_plan_args_write_build_plan_term/1,
+    debug_plan_args_emit_detailed_progress/1
 ]).
 
 all() ->
@@ -37,7 +38,8 @@ all() ->
         plan_warns_for_multiple_missing_registries_in_sorted_order,
         plan_reports_invalid_motherlode_path,
         plan_rejects_unknown_argument,
-        valid_plan_args_write_build_plan_term
+        valid_plan_args_write_build_plan_term,
+        debug_plan_args_emit_detailed_progress
     ].
 
 global_help_lists_plan_command(_Config) ->
@@ -437,7 +439,8 @@ valid_plan_args_write_build_plan_term(_Config) ->
         "--verbose"
     ]),
     assert_equal(0, Status),
-    assert_equal(<<>>, Output),
+    assert_contains(Output, <<"plan: loading motherlode">>),
+    assert_contains(Output, <<"plan: writing build plan outputs.">>),
     {ok, Plan} = smelterl_plan:read_file(OutputPlan),
     assert_equal(demo, maps:get(product, Plan)),
     assert_equal([], maps:get(auxiliary_ids, Plan)),
@@ -469,10 +472,32 @@ valid_plan_args_write_build_plan_term(_Config) ->
     assert_equal(RepoId, maps:get(demo, NuggetRepoMap)),
     assert_equal(RepoId, maps:get(platform_core, NuggetRepoMap)).
 
+debug_plan_args_emit_detailed_progress(_Config) ->
+    MotherlodeDir = create_valid_motherlode(),
+    OutputDir = make_temp_dir("smelterl-plan-debug-output"),
+    OutputPlan = filename:join(OutputDir, "build_plan.term"),
+    {Status, Output} = run_main([
+        "plan",
+        "--product", "demo",
+        "--motherlode", MotherlodeDir,
+        "--output-plan", OutputPlan,
+        "--debug"
+    ]),
+    assert_equal(0, Status),
+    assert_contains(Output, <<"plan: loaded">>),
+    assert_contains(Output, <<"plan: resolved main target plus">>),
+    assert_contains(Output, <<"plan: capability summary">>).
+
 run_main(Argv) ->
     ScriptDir = filename:dirname(code:which(?MODULE)),
     SmelterlEbin = filename:join(filename:dirname(ScriptDir), "ebin"),
-    Eval = io_lib:format("halt(smelterl:main(~tp)).", [Argv]),
+    PrivDir = source_priv_dir(),
+    Eval = io_lib:format(
+        "application:load(smelterl), "
+        "application:set_env(smelterl, priv_dir, ~tp), "
+        "halt(smelterl:main(~tp)).",
+        [PrivDir, Argv]
+    ),
     Port =
         open_port(
             {spawn_executable, os:find_executable("erl")},
@@ -493,6 +518,18 @@ collect_port_output(Port, Acc) ->
         {Port, {exit_status, Status}} ->
             {Status, iolist_to_binary(lists:reverse(Acc))}
     end.
+
+source_priv_dir() ->
+    filename:join(project_root(), "priv").
+
+project_root() ->
+    TestDir = filename:dirname(code:which(?MODULE)),
+    ascend(TestDir, 5).
+
+ascend(Path, 0) ->
+    Path;
+ascend(Path, Levels) when Levels > 0 ->
+    ascend(filename:dirname(Path), Levels - 1).
 
 assert_contains(Haystack, Needle) ->
     case binary:match(Haystack, Needle) of

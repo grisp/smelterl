@@ -636,11 +636,11 @@ substitution_values(TargetId, ProductId, Motherlode, Config) ->
  -spec load_cumulative_key_spec() ->
     {ok, cumulative_key_spec()} | {error, term()}.
 load_cumulative_key_spec() ->
-    SpecPath = filename:join(priv_dir(), "defconfig-keys.spec"),
-    case file:consult(SpecPath) of
-        {ok, [Entries]} when is_list(Entries) ->
+    SpecPath = <<"defconfig-keys.spec">>,
+    case smelterl_file:read_app_priv_term(smelterl, SpecPath) of
+        {ok, Entries} when is_list(Entries) ->
             normalize_cumulative_key_spec(Entries, #{});
-        {ok, [_Other]} ->
+        {ok, _Other} ->
             {error, {invalid_defconfig_key_spec, SpecPath, invalid_root}};
         {error, Reason} ->
             {error, {invalid_defconfig_key_spec, SpecPath, Reason}}
@@ -659,15 +659,6 @@ normalize_cumulative_key_spec([{Key, Kind} | Rest], Acc0)
     );
 normalize_cumulative_key_spec(_Entries, _Acc) ->
     {error, invalid_entries}.
-
-priv_dir() ->
-    case code:priv_dir(smelterl) of
-        {error, bad_name} ->
-            BeamDir = filename:dirname(code:which(?MODULE)),
-            filename:join([BeamDir, "..", "priv"]);
-        Dir ->
-            Dir
-    end.
 
 lookup_nugget(NuggetId, Motherlode) ->
     maps:get(NuggetId, maps:get(nuggets, Motherlode)).

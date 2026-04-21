@@ -98,25 +98,20 @@ substitute_markers(String, Config, Acc) ->
     end.
 
 load_template(TemplateKey) ->
-    case template_path(TemplateKey) of
-        {ok, Path} ->
-            case file:read_file(Path) of
+    case template_filename(TemplateKey) of
+        undefined ->
+            {error, {template_not_found, normalize_template_key(TemplateKey)}};
+        Filename ->
+            case smelterl_file:read_app_priv_file(
+                smelterl,
+                filename:join("templates", Filename)
+            ) of
                 {ok, Template} ->
                     {ok, Template};
                 {error, Reason} ->
                     {error,
                         {template_load_failed, normalize_template_key(TemplateKey), Reason}}
-            end;
-        {error, _} = Error ->
-            Error
-    end.
-
-template_path(TemplateKey) ->
-    case template_filename(TemplateKey) of
-        undefined ->
-            {error, {template_not_found, normalize_template_key(TemplateKey)}};
-        Filename ->
-            {ok, filename:join(priv_dir(), filename:join("templates", Filename))}
+            end
     end.
 
 template_filename(external_desc) ->
@@ -411,23 +406,6 @@ normalize_template_key(Key) when is_atom(Key) ->
     Key;
 normalize_template_key(Key) when is_binary(Key) ->
     binary_to_atom(Key, utf8).
-
-priv_dir() ->
-    case application:get_env(smelterl, priv_dir) of
-        {ok, Dir} ->
-            Dir;
-        undefined ->
-            case code:priv_dir(smelterl) of
-                {error, bad_name} ->
-                    BeamPath = code:which(?MODULE),
-                    filename:join(
-                        filename:dirname(filename:dirname(BeamPath)),
-                        "priv"
-                    );
-                Dir ->
-                    Dir
-            end
-    end.
 
 to_binary(Value) when is_binary(Value) ->
     Value;

@@ -14,6 +14,8 @@ and a small set of reusable path helpers for later plan/generate stages.
 
 -export([format_term/1]).
 -export([relativize/2]).
+-export([read_app_priv_file/2]).
+-export([read_app_priv_term/2]).
 -export([resolve_path/2]).
 -export([write_iodata/2]).
 -export([write_term/2]).
@@ -28,7 +30,7 @@ Serialize one Erlang term using Alloy's UTF-8 term-file conventions.
 format_term(Term) ->
     [
         <<"%% coding: utf-8\n">>,
-        io_lib:format("~0tp.~n", [Term])
+        io_lib:format("~tp.~n", [Term])
     ].
 
 -doc """
@@ -71,6 +73,37 @@ write_iodata(Device, Content) ->
             {error, {write_failed, Reason}};
         Error ->
             {error, {write_failed, Error}}
+    end.
+
+-doc """
+Read one file from an application's `priv` directory.
+""".
+-spec read_app_priv_file(atom(), smelterl:file_path() | string()) ->
+    {ok, binary()} | {error, term()}.
+read_app_priv_file(App, RelativePath) ->
+    case app_priv_path(App, RelativePath) of
+        {ok, Path} ->
+            case erl_prim_loader:get_file(to_list(Path)) of
+                {ok, Content, _FullName} ->
+                    {ok, Content};
+                error ->
+                    {error, {read_failed, Path, unknown}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+-doc """
+Read and parse one Erlang term file from an application's `priv` directory.
+""".
+-spec read_app_priv_term(atom(), smelterl:file_path() | string()) ->
+    {ok, term()} | {error, term()}.
+read_app_priv_term(App, RelativePath) ->
+    case read_app_priv_file(App, RelativePath) of
+        {ok, Content} ->
+            parse_term_binary(Content);
+        {error, _} = Error ->
+            Error
     end.
 
 -doc """
@@ -119,6 +152,33 @@ to_binary(Path) when is_binary(Path) ->
     Path;
 to_binary(Path) ->
     unicode:characters_to_binary(Path).
+
+app_priv_path(App, RelativePath) ->
+    case application:get_env(App, priv_dir) of
+        {ok, PrivDir} ->
+            {ok, filename:join(PrivDir, to_list(RelativePath))};
+        undefined ->
+            case code:priv_dir(App) of
+                {error, bad_name} ->
+                    {error, missing_priv_dir};
+                PrivDir ->
+                    {ok, filename:join(PrivDir, to_list(RelativePath))}
+            end
+    end.
+
+parse_term_binary(Content) ->
+    Source = unicode:characters_to_list(Content),
+    case erl_scan:string(Source) of
+        {ok, Tokens, _EndLine} ->
+            case erl_parse:parse_term(Tokens) of
+                {ok, Term} ->
+                    {ok, Term};
+                {error, Reason} ->
+                    {error, {invalid_term, Reason}}
+            end;
+        {error, Reason, _EndLine} ->
+            {error, {invalid_term, Reason}}
+    end.
 
 split_abs_path(Path) ->
     Parts = filename:split(filename:absname(to_list(Path))),

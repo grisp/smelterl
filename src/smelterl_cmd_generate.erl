@@ -70,11 +70,22 @@ help(generate) ->
     ].
 
 run(generate, Opts) ->
-    maybe
-        ok ?= require_options(Opts),
-        ok ?= validate_option_matrix(Opts),
-        run_generate(Opts)
-    else
+    case resolve_log_level(Opts) of
+        {ok, LogLevel} ->
+            smelterl_log:with_log_level(
+                LogLevel,
+                fun() ->
+                    maybe
+                        ok ?= require_options(Opts),
+                        ok ?= validate_option_matrix(Opts),
+                        run_generate(Opts)
+                    else
+                        {error, Message} ->
+                            smelterl_log:error("~ts~n", [Message]),
+                            2
+                    end
+                end
+            );
         {error, Message} ->
             smelterl_log:error("~ts~n", [Message]),
             2
@@ -87,15 +98,31 @@ run_generate(Opts) ->
     PlanPath = maps:get(plan, Opts),
     TargetId = selected_target_id(Opts),
     maybe
+        smelterl_log:info("generate: loading build plan '~ts'.~n", [PlanPath]),
         {ok, Plan} ?= load_plan(PlanPath),
         {ok, Target} ?= select_target(TargetId, Plan),
+        smelterl_log:info(
+            "generate: rendering target '~ts' (~ts).~n",
+            [
+                selected_target_label(TargetId),
+                atom_to_binary(maps:get(kind, Target), utf8)
+            ]
+        ),
+        smelterl_log:debug(
+            "generate: target topology has ~B nuggets.~n",
+            [length(maps:get(topology, Target, []))]
+        ),
         ok ?= maybe_write_external_desc(Opts, Plan, Target),
         ok ?= maybe_write_config_in(Opts, Plan, Target),
         ok ?= maybe_write_external_mk(Opts, Target),
         ok ?= maybe_write_defconfig(Opts, Target),
         ok ?= maybe_write_context(Opts, Plan, Target),
-        {ok, BuildrootLegal} ?= maybe_prepare_manifest_legal(Opts),
-        ok ?= maybe_write_manifest(Opts, Plan, BuildrootLegal),
+        {ok, BuildrootLegal, ManifestSeed} ?= maybe_prepare_manifest_legal(
+            Opts,
+            Plan,
+            Target
+        ),
+        ok ?= maybe_write_manifest(Opts, ManifestSeed, BuildrootLegal),
         0
     else
         {plan_error, Reason} ->
@@ -107,6 +134,40 @@ run_generate(Opts) ->
         {generate_error, Reason} ->
             smelterl_log:error("~ts~n", [format_generate_error(Reason)]),
             1
+    end.
+
+resolve_log_level(Opts) ->
+    BaseLevel =
+        case maps:get(log, Opts, undefined) of
+            undefined ->
+                {ok, warning};
+            Value ->
+                case smelterl_log:parse_level(Value) of
+                    {ok, Level} ->
+                        {ok, Level};
+                    error ->
+                        {error,
+                            io_lib:format(
+                                "generate: invalid log level '~ts'. Expected error, warning, info, or debug.",
+                                [Value]
+                            )}
+                end
+        end,
+    case BaseLevel of
+        {error, _} = Error ->
+            Error;
+        {ok, Level0} ->
+            Level1 =
+                case maps:get(verbose, Opts, false) of
+                    true -> info;
+                    false -> Level0
+                end,
+            Level2 =
+                case maps:get(debug, Opts, false) of
+                    true -> debug;
+                    false -> Level1
+                end,
+            {ok, Level2}
     end.
 
 require_options(Opts) ->
@@ -224,6 +285,11 @@ selected_target_id(Opts) ->
             list_to_atom(AuxiliaryId)
     end.
 
+selected_target_label(main) ->
+    <<"main">>;
+selected_target_label(TargetId) ->
+    atom_to_binary(TargetId, utf8).
+
 load_plan(Path) ->
     case smelterl_plan:read_file(Path) of
         {ok, _Plan} = Ok ->
@@ -249,6 +315,7 @@ maybe_write_external_desc(Opts, Plan, Target) ->
         [] ->
             ok;
         Path ->
+            smelterl_log:debug("generate: writing external.desc to '~ts'.~n", [Path]),
             write_external_desc(Path, maps:get(product, Plan), Target)
     end.
 
@@ -259,6 +326,7 @@ maybe_write_config_in(Opts, Plan, Target) ->
         [] ->
             ok;
         Path ->
+            smelterl_log:debug("generate: writing Config.in to '~ts'.~n", [Path]),
             write_config_in(Path, Plan, Target)
     end.
 
@@ -269,6 +337,7 @@ maybe_write_external_mk(Opts, Target) ->
         [] ->
             ok;
         Path ->
+            smelterl_log:debug("generate: writing external.mk to '~ts'.~n", [Path]),
             write_external_mk(Path, Target)
     end.
 
@@ -279,6 +348,7 @@ maybe_write_defconfig(Opts, Target) ->
         [] ->
             ok;
         Path ->
+            smelterl_log:debug("generate: writing defconfig to '~ts'.~n", [Path]),
             write_defconfig(Path, Target)
     end.
 
@@ -289,57 +359,110 @@ maybe_write_context(Opts, Plan, Target) ->
         [] ->
             ok;
         Path ->
+            smelterl_log:debug("generate: writing alloy_context.sh to '~ts'.~n", [Path]),
             write_context(Path, Plan, Target)
     end.
 
-maybe_prepare_manifest_legal(Opts) ->
+maybe_prepare_manifest_legal(Opts, Plan, Target) ->
+    ManifestSeed0 = maps:get(manifest_seed, Plan),
     BuildrootPaths = [
         path_to_binary(Path)
      || Path <- maps:get(buildroot_legal, Opts, [])
     ],
     case maps:get(export_legal, Opts, undefined) of
         undefined ->
-            collect_manifest_legal(BuildrootPaths, undefined, Opts);
+            collect_manifest_legal(
+                BuildrootPaths,
+                undefined,
+                Opts,
+                ManifestSeed0,
+                Plan,
+                Target
+            );
         [] ->
-            collect_manifest_legal(BuildrootPaths, undefined, Opts);
+            collect_manifest_legal(
+                BuildrootPaths,
+                undefined,
+                Opts,
+                ManifestSeed0,
+                Plan,
+                Target
+            );
         ExportLegalPath ->
             collect_manifest_legal(
                 BuildrootPaths,
                 export_dir(Opts, ExportLegalPath),
-                Opts
+                Opts,
+                ManifestSeed0,
+                Plan,
+                Target
             )
     end.
 
-collect_manifest_legal([], undefined, _Opts) ->
-    {ok, undefined};
-collect_manifest_legal([], _ExportDir, Opts) ->
+collect_manifest_legal([], undefined, _Opts, ManifestSeed, _Plan, _Target) ->
+    {ok, undefined, ManifestSeed};
+collect_manifest_legal([], _ExportDir, Opts, ManifestSeed0, Plan, Target) ->
     case export_legal(Opts, maps:get(export_legal, Opts)) of
         ok ->
-            {ok, undefined};
+            export_alloy_legal(ManifestSeed0, Plan, Target, Opts, undefined);
         {generate_error, _} = Error ->
             Error
     end;
-collect_manifest_legal(BuildrootPaths, ExportDir, Opts) ->
+collect_manifest_legal(BuildrootPaths, _ExportDir, Opts, ManifestSeed0, Plan, Target) ->
     IncludeSources = maps:get(include_sources, Opts, false),
     case smelterl_legal:collect_legal(
         BuildrootPaths,
-        ExportDir,
+        case maps:get(export_legal, Opts, undefined) of
+            undefined ->
+                undefined;
+            [] ->
+                undefined;
+            ExportLegalPath ->
+                export_dir(Opts, ExportLegalPath)
+        end,
         IncludeSources
     ) of
         {ok, LegalInfo} ->
-            {ok, LegalInfo};
+            export_alloy_legal(ManifestSeed0, Plan, Target, Opts, LegalInfo);
         {error, Reason} ->
             {generate_error, {legal_collect_failed, Reason}}
     end.
 
-maybe_write_manifest(Opts, Plan, BuildrootLegal) ->
+export_alloy_legal(ManifestSeed0, Plan, Target, Opts, BuildrootLegal) ->
+    case maps:get(export_legal, Opts, undefined) of
+        undefined ->
+            {ok, BuildrootLegal, ManifestSeed0};
+        [] ->
+            {ok, BuildrootLegal, ManifestSeed0};
+        ExportLegalPath ->
+            ExportDir = export_dir(Opts, ExportLegalPath),
+            IncludeSources = maps:get(include_sources, Opts, false),
+            smelterl_log:info(
+                "generate: exporting alloy legal metadata to '~ts'.~n",
+                [ExportDir]
+            ),
+            case smelterl_legal:export_alloy(
+                ManifestSeed0,
+                Target,
+                maps:get(extra_config, Plan, #{}),
+                ExportDir,
+                IncludeSources
+            ) of
+                {ok, ManifestSeed} ->
+                    {ok, BuildrootLegal, ManifestSeed};
+                {error, Reason} ->
+                    {generate_error, {legal_export_failed, Reason}}
+            end
+    end.
+
+maybe_write_manifest(Opts, ManifestSeed, BuildrootLegal) ->
     case maps:get(output_manifest, Opts, undefined) of
         undefined ->
             ok;
         [] ->
             ok;
         Path ->
-            write_manifest(Path, Plan, BuildrootLegal)
+            write_manifest(Path, ManifestSeed, BuildrootLegal)
     end.
 
 write_external_desc(Path, ProductId, Target) ->
@@ -434,8 +557,7 @@ export_dir(Opts, ExportLegalPath) ->
     ExportRoot = manifest_base_path(ManifestPath),
     smelterl_file:resolve_path(ExportLegalPath, ExportRoot).
 
-write_manifest(Path, Plan, BuildrootLegal) ->
-    ManifestSeed = maps:get(manifest_seed, Plan),
+write_manifest(Path, ManifestSeed, BuildrootLegal) ->
     BasePath = path_to_binary(manifest_base_path(Path)),
     PathOrDevice =
         case Path of

@@ -10,6 +10,7 @@
     export_legal_merges_buildroot_trees_and_preserves_readme_blocks/1,
     export_legal_includes_sources_when_requested/1,
     export_legal_rejects_existing_export_directory/1,
+    export_alloy_writes_manifest_licenses_and_sources/1,
     parse_legal_rejects_invalid_path/1,
     parse_legal_rejects_missing_manifest_file/1,
     parse_legal_rejects_malformed_manifest/1
@@ -23,6 +24,7 @@ all() ->
         export_legal_merges_buildroot_trees_and_preserves_readme_blocks,
         export_legal_includes_sources_when_requested,
         export_legal_rejects_existing_export_directory,
+        export_alloy_writes_manifest_licenses_and_sources,
         parse_legal_rejects_invalid_path,
         parse_legal_rejects_missing_manifest_file,
         parse_legal_rejects_malformed_manifest
@@ -287,6 +289,102 @@ export_legal_rejects_existing_export_directory(_Config) ->
         false
     ).
 
+export_alloy_writes_manifest_licenses_and_sources(_Config) ->
+    RepoDir = filename:join(make_temp_dir("smelterl-alloy-export-repo"), "builtin"),
+    NuggetDir = filename:join(RepoDir, "demo"),
+    CacheDir = make_temp_dir("smelterl-alloy-export-cache"),
+    ExportDir = filename:join(make_temp_dir("smelterl-alloy-export"), "legal-info"),
+    DemoLicense = filename:join(NuggetDir, "licenses/LICENSE"),
+    ComponentLicense = filename:join(NuggetDir, "licenses/THIRD_PARTY.txt"),
+    NuggetSource = filename:join(NuggetDir, "source.txt"),
+    ComponentArchive = filename:join(CacheDir, "tooling-src.tar.gz"),
+    ok = filelib:ensure_dir(DemoLicense),
+    ok = file:write_file(DemoLicense, <<"demo license\n">>),
+    ok = file:write_file(ComponentLicense, <<"component license\n">>),
+    ok = file:write_file(NuggetSource, <<"nugget source\n">>),
+    ok = file:write_file(ComponentArchive, <<"archive source\n">>),
+    ok = filelib:ensure_dir(filename:join(ExportDir, "dummy")),
+    ok = file:write_file(filename:join(ExportDir, "README"), <<"Buildroot-free export\n">>),
+    Seed = #{
+        product => demo,
+        target_arch => <<"arm-buildroot-linux-gnueabihf">>,
+        product_fields => #{},
+        repositories => [],
+        nugget_repo_map => #{demo => undefined},
+        nuggets => [
+            #{
+                id => demo,
+                fields => #{
+                    version => <<"1.2.3">>,
+                    category => feature,
+                    license => <<"Proprietary">>,
+                    license_files => [path_binary(DemoLicense)]
+                }
+            }
+        ],
+        auxiliary_products => [],
+        capabilities => #{},
+        sdk_outputs => [],
+        external_components => [
+            #{
+                id => tooling,
+                nugget => demo,
+                version => <<"9.1">>,
+                license => <<"BSD-3-Clause">>,
+                license_files => [<<"licenses/THIRD_PARTY.txt">>],
+                source_archive => {computed, <<"[[ALLOY_CACHE_DIR]]/tooling-src.tar.gz">>}
+            }
+        ],
+        smelterl_repository => smelterl
+    },
+    Target = #{
+        id => main,
+        kind => main,
+        motherlode => #{
+            nuggets => #{
+                demo => #{
+                    id => demo,
+                    repo_path => path_binary(RepoDir),
+                    nugget_relpath => <<"demo">>,
+                    version => <<"1.2.3">>
+                }
+            }
+        },
+        config => #{}
+    },
+    {ok, ExportedSeed} = smelterl_legal:export_alloy(
+        Seed,
+        Target,
+        #{<<"ALLOY_CACHE_DIR">> => path_binary(CacheDir)},
+        path_binary(ExportDir),
+        true
+    ),
+    assert_file_exists(filename:join(ExportDir, "alloy-manifest.csv")),
+    assert_file_exists(filename:join(ExportDir, "alloy-licenses/demo-1.2.3/LICENSE")),
+    assert_file_exists(filename:join(ExportDir, "alloy-licenses/demo-1.2.3/tooling-9.1/THIRD_PARTY.txt")),
+    assert_file_exists(filename:join(ExportDir, "alloy-sources/demo-1.2.3/source.txt")),
+    assert_file_exists(filename:join(ExportDir, "alloy-sources/demo-1.2.3/tooling-9.1/tooling-src.tar.gz")),
+    assert_file_contains(
+        filename:join(ExportDir, "alloy-manifest.csv"),
+        [
+            <<"\"demo\",\"1.2.3\",\"Proprietary\",\"alloy-licenses/demo-1.2.3/LICENSE\",\"alloy-sources/demo-1.2.3\"">>,
+            <<"\"tooling\",\"9.1\",\"BSD-3-Clause\",\"alloy-licenses/demo-1.2.3/tooling-9.1/THIRD_PARTY.txt\",\"alloy-sources/demo-1.2.3/tooling-9.1/tooling-src.tar.gz\"">>
+        ]
+    ),
+    assert_file_contains(
+        filename:join(ExportDir, "README"),
+        [<<"alloy-manifest.csv">>, <<"alloy-licenses/">>, <<"alloy-sources/">>]
+    ),
+    assert_file_contains(
+        filename:join(ExportDir, "legal-info.sha256"),
+        [<<"alloy-manifest.csv">>, <<"alloy-licenses/demo-1.2.3/LICENSE">>]
+    ),
+    [#{fields := DemoFields}] = maps:get(nuggets, ExportedSeed),
+    assert_equal(
+        [<<"alloy-licenses/demo-1.2.3/LICENSE">>],
+        relativize_paths(maps:get(license_files, DemoFields), path_binary(ExportDir))
+    ).
+
 parse_legal_rejects_invalid_path(_Config) ->
     MissingDir = unicode:characters_to_binary(filename:join(make_temp_dir("smelterl-legal-missing"), "missing")),
     {error, {invalid_path, MissingDir, _Detail}} = smelterl_legal:parse_legal(MissingDir).
@@ -491,3 +589,12 @@ make_source_tree(LegalDir, [RelativePath | Rest]) ->
     ok = filelib:ensure_dir(FullPath),
     ok = file:write_file(FullPath, <<"source fixture\n">>),
     make_source_tree(LegalDir, Rest).
+
+path_binary(Path) ->
+    unicode:characters_to_binary(filename:absname(Path)).
+
+relativize_paths(Paths, BasePath) ->
+    [
+        smelterl_file:relativize(Path, BasePath)
+     || Path <- Paths
+    ].

@@ -67,7 +67,7 @@ The tool does **not** clone VCS repositories, create directories or symlinks, or
 
 ### 1.4 ALLOY_MOTHERLODE
 
-- **ALLOY_MOTHERLODE** is **always** considered an extra-config variable (resolving to `${ALLOY_MOTHERLODE}`) for **Config.in** generation and template substitution: smelterl always emits a Kconfig declaration for `ALLOY_MOTHERLODE` in the generated Config.in (so that Buildroot accepts it when passed as a make parameter). The caller **must not** pass `--extra-config ALLOY_MOTHERLODE=...`; ALLOY_MOTHERLODE is never taken from `--extra-config`. The caller is expected to set `ALLOY_MOTHERLODE` before sourcing alloy_context.sh.
+- **ALLOY_MOTHERLODE** is **always** considered an extra-config variable. Smelterl always emits a Kconfig declaration for `ALLOY_MOTHERLODE` in the generated Config.in (so that Buildroot accepts it when passed as a make parameter). Kconfig `source` lines use `"$ALLOY_MOTHERLODE/..."` because that matches Buildroot/Kconfig environment-path syntax; shell/config/template-resolved paths continue to use `${ALLOY_MOTHERLODE}`. The caller **must not** pass `--extra-config ALLOY_MOTHERLODE=...`; ALLOY_MOTHERLODE is never taken from `--extra-config`. The caller is expected to set `ALLOY_MOTHERLODE` before sourcing alloy_context.sh.
 - **ALLOY_MOTHERLODE is not defined in alloy_context.sh.** The generated context script assumes `ALLOY_MOTHERLODE` is already set by the environment (e.g. by the wrapper that sources the script). The script may assert that it is set (e.g. `: "${ALLOY_MOTHERLODE:?..."`) but must not assign it, so that no local path information is embedded.
 - **Path resolution for config/exports:** All `{path, PathSpec}` entries in `config` and `exports` that refer to nugget resources (relative paths or `@nugget/path`) are resolved to a path **prefixed by the bash variable `${ALLOY_MOTHERLODE}`**-e.g. `"${ALLOY_MOTHERLODE}/<repo>/<nugget>/path"`-rather than a fully specified absolute filesystem path. This keeps the generated alloy_context.sh free of host-specific paths; at runtime, when `ALLOY_MOTHERLODE` is set, the path becomes absolute. Only PathSpec values that are already absolute (leading `/`) are emitted as-is.
 
@@ -604,7 +604,7 @@ Certain export keys have conventional meaning across the system. `smelterl` read
 
 **Process:**
 
-1. Use the **Config.in template** so that comments and layout are defined in the template rather than in code. Build the data needed for the template: extra-config keys (including ALLOY_MOTHERLODE first; see [§1.4](#14-alloy_motherlode)), and an ordered list of source entries (per nugget in topology order, then per package with a `Config.in`: path and nugget name for comments). Each Kconfig block is: `config VAR_NAME`, `string`, `option env="VAR_NAME"` so Buildroot accepts these when passed as make parameters.
+1. Use the **Config.in template** so that comments and layout are defined in the template rather than in code. Build the data needed for the template: extra-config keys (including ALLOY_MOTHERLODE first; see [§1.4](#14-alloy_motherlode)), and an ordered list of source entries (per nugget in topology order, then per package with a `Config.in`: path and nugget name for comments). Each Kconfig block is: `config VAR_NAME`, `string`, `option env="VAR_NAME"` so Buildroot accepts these when passed as make parameters. Source entries use Kconfig/Buildroot environment syntax (`"$ALLOY_MOTHERLODE/..."`), not Kconfig macro syntax.
 2. For each nugget in topology order: read `buildroot` metadata; if `{packages, Path}` is present, resolve Path relative to nugget directory; list package subdirectories that have a `Config.in`; add each as a source entry with motherlode-relative path and nugget name. Order within a nugget can be deterministic (e.g. alphabetical by package name).
 3. Render the **Config.in template** with the extra-config keys and source list; write the result to the **open output** provided by the caller.
 
@@ -875,9 +875,10 @@ This stage consumes plan seed + generate-time inputs and writes `ALLOY_SDK_MANIF
    - For nuggets: `license_files`.
    - For external components: `license_files`.
    - Base path is derived from `--output-manifest` location.
+   - Keep only manifest-local exported legal paths (for example `legal-info/...`). If a path would resolve outside the manifest tree or still points at a source/build tree, omit it rather than leaking a non-relocatable path.
 4. **Add Buildroot package sections (optional):**
    - When parsed legal data is available from [§4.13](#413-collecting-legal-info-and-export), emit `buildroot_packages` and `buildroot_host_packages`.
-   - Relativize package license paths to manifest base.
+   - Relativize package license paths to manifest base and keep only exported manifest-local legal paths.
    - If unavailable, omit (or emit empty lists where allowed by [Data Design](01_DATA_DESIGN.md)).
 5. **Assemble full manifest term in section order** per [Data Design](01_DATA_DESIGN.md) (product/build, build_environment, repositories, nuggets, auxiliary_products, capabilities, sdk_outputs, optional Buildroot package sections, external_components).
 6. **Integrity:**
@@ -962,11 +963,11 @@ The scripts’ requirements are specified in [§5.7.1 Build-time and helper scri
 
 ### 5.2 General Principles
 
-- **Self-contained escript:** The smelterl escript must be self-contained: it embeds its dependencies (including **erts** and the **priv** directory where Mustache templates are defined) so that a single executable can be distributed and run without requiring a separate Erlang installation or unpacked release.
+- **Self-contained escript archive:** The smelterl escript must be self-contained with respect to Smelterl application assets: it embeds its compiled modules, dependencies, and the **priv** directory (templates, defconfig-key spec, generated build-info) in the escript archive so that the executable can be relocated without requiring a checkout-side `priv/` tree. It does **not** embed **erts**; execution still requires a compatible Erlang/OTP runtime (for example the SDK host Erlang).
 - **Input/output:** All inputs come from CLI options and the filesystem (motherlode). All outputs are written only to paths specified by the relevant options (`--output-*` and `--export-legal`).
 - **Error handling:** On validation or I/O error, report a clear message to stderr and exit with non-zero status. No partial writes for the same run (either all requested outputs are written or none).
 - **Encoding:** All Erlang term files (including generated manifest) follow the [Overview](00_OVERVIEW.md): UTF-8, binaries for strings, one term per file, period at end.
-- **Templating:** Use **Mustache** for all processes that generate text files: external.desc, Config.in, external.mk, defconfig, alloy_context.sh, README. Templates live in `priv/templates/` and receive a data structure (keys, source list, nugget list, config maps, etc.). They may also receive extra information used to generate better comments and headers-e.g. nugget identifier and name, product name and version, smelterl version, etc. Comments, headers, and layout are defined in the templates so that changes do not require Erlang code edits. The manifest is serialized as an Erlang term (not Mustache).
+- **Templating:** Use **Mustache** for all processes that generate text files: external.desc, Config.in, external.mk, defconfig, alloy_context.sh, README. Templates live in `priv/templates/` and receive a data structure (keys, source list, nugget list, config maps, etc.). They may also receive extra information used to generate better comments and headers-e.g. nugget identifier and name, product name and version, smelterl version, etc. Comments, headers, and layout are defined in the templates so that changes do not require Erlang code edits. The manifest is serialized as an Erlang term (not Mustache). Runtime code must read these `priv` assets through application-priv/archive-aware helpers rather than checkout-relative path discovery.
 - **Plan-first generators:** For file-generation modules, split logic into two layers: (1) compute a deterministic Erlang term/map representing the output content (suitable for persistence in `build_plan.term`), and (2) render/write that term to text. `plan` should run the compute layer; `generate` should only select plan data and render it.
 - **Testability:** Keep modules as pure as possible: functions take explicit inputs (motherlode map, tree, topology, config map) and return content or updated state. Functions that write output data take an open output (e.g. file descriptor or IO device) as an argument so that output can be sent to a file or to stdout as needed.
 - **Determinism:** Topological order and merge order (config, defconfig) must be deterministic for the same inputs so that builds are reproducible.
@@ -1006,7 +1007,7 @@ The project uses a test-first, disciplined testing approach so that behaviour is
 rebar3 compile
 ```
 
-**Produce self-contained escript:**
+**Produce self-contained escript archive:**
 
 ```
 rebar3 escriptize
@@ -1019,7 +1020,9 @@ The escript output is be `_build/default/bin/smelterl`.
   - **mustache** - for rendering Mustache templates (external.desc, Config.in, external.mk, defconfig, alloy_context.sh, README); see §4.8-§4.11 and §5.7 generator modules.
 - **Test profile defpendencies:**
   - **meck** - for mockups in unit tests.
-- **Self-contained escript:** rebar3 **must** be configured so that the generated escript **includes ERTS** and the **priv directory** (templates, defconfig-keys.spec, and the generated `build_info.term`). - - **generate_build_info.escript:** The build **must** invoke **scripts/generate_build_info.escript** during **compile** and **escriptiz** commands so that `priv/build_info.term` is created (or updated). Use a rebar3 hook that runs the script from the project root and writes into `priv/build_info.term`.
+- **Embedded `priv`, not embedded ERTS:** rebar3 **must** be configured so that the generated escript archive includes the **priv directory** (templates, `defconfig-keys.spec`, and generated `build_info.term`) but does **not** attempt to embed **ERTS**. A compatible Erlang/OTP installation remains a runtime requirement.
+- **generate_build_info.escript:** The build **must** invoke **scripts/generate_build_info.escript** during **compile** and **escriptize** commands so that `priv/build_info.term` is created (or updated). Use a rebar3 hook that runs the script from the project root and writes into `priv/build_info.term`.
+- **embed_priv_in_escript.escript:** The build **must** invoke a post-`escriptize` step that appends `priv/` into the generated escript archive. Tests must cover both direct test execution with an explicit `priv_dir` override and relocated escript execution with embedded `priv`.
 
 ---
 
@@ -1870,7 +1873,7 @@ Abstract **script execution** and **variable resolution from environment**. Prov
 #### 5.7.15 smelterl_template
 
 **Role:**
-Single module for all templating: (1) **[[KEY]] substitution** - given a string and consolidated config, replace every `[[KEY]]` with the value for KEY from config; (2) **Template engine** - given a template key and a data structure, render to a string or write to a file. This module is the only one that knows where templates live (e.g. `priv/templates/`) and which engine is used (e.g. Mustache). Callers use template keys only; they do not reference paths or the engine. Reads template files from application priv; does not use §5.6 structures (callers pass config or data map).
+Single module for all templating: (1) **[[KEY]] substitution** - given a string and consolidated config, replace every `[[KEY]]` with the value for KEY from config; (2) **Template engine** - given a template key and a data structure, render to a string or write to a file. This module is the only one that knows where templates live (e.g. `priv/templates/`) and which engine is used (e.g. Mustache). Callers use template keys only; they do not reference paths or the engine. Reads template files from application priv through archive-aware helpers; does not use checkout-relative discovery and does not use §5.6 structures (callers pass config or data map).
 
 **Exported functions:**
 
@@ -2049,7 +2052,7 @@ Build external.mk: include lines for each nugget's package .mk files in topology
 #### 5.7.19 smelterl_gen_defconfig
 
 **Role:**
-Build and render defconfig data in two phases. Plan phase merges defconfig fragments into a deterministic `defconfig_model()` (regular + cumulative key/value lines, including automatic target-local wrapper hook entries). Generate phase renders that model via smelterl_template and writes output. Reads defconfig-keys.spec from priv. Does not modify shared structures.
+Build and render defconfig data in two phases. Plan phase merges defconfig fragments into a deterministic `defconfig_model()` (regular + cumulative key/value lines, including automatic target-local wrapper hook entries). Generate phase renders that model via smelterl_template and writes output. Reads `defconfig-keys.spec` from application priv through the same archive-aware path used by the escript. Does not modify shared structures.
 
 **Exported functions:**
 
@@ -2574,11 +2577,11 @@ config ALLOY_BUILD_DIR
 ## Nugget Packages ##
 
 # platform_imx6: NXP i.MX6 BSP
-source "$(ALLOY_MOTHERLODE)/builtin/platform_imx6/buildroot/Config.in"
+source "$ALLOY_MOTHERLODE/builtin/platform_imx6/buildroot/Config.in"
 # toolchain_ctng: Crosstool-NG Toolchain
-source "$(ALLOY_MOTHERLODE)/builtin/toolchain_ctng/buildroot/Config.in"
+source "$ALLOY_MOTHERLODE/builtin/toolchain_ctng/buildroot/Config.in"
 # acme_app: ACME Application BSP
-source "$(ALLOY_MOTHERLODE)/acme_nuggets/acme_app/buildroot/Config.in"
+source "$ALLOY_MOTHERLODE/acme_nuggets/acme_app/buildroot/Config.in"
 ```
 
 ---
