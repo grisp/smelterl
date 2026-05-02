@@ -206,9 +206,9 @@ parse_legal_accepts_buildroot_bare_quotes_inside_license_field(_Config) ->
         maps:get(host_packages, LegalInfo)
     ).
 
-export_legal_merges_buildroot_trees_and_preserves_readme_blocks(_Config) ->
-    {AuxLegalDir, MainLegalDir} = make_export_legal_inputs(),
-    ExportDir = filename:join(make_temp_dir("smelterl-legal-export"), "legal-info"),
+export_legal_merges_buildroot_trees_and_preserves_readme_blocks(Config) ->
+    {AuxLegalDir, MainLegalDir} = make_export_legal_inputs(Config),
+    ExportDir = filename:join(make_temp_dir(Config, "smelterl-legal-export"), "legal-info"),
     ok = smelterl_legal:export_legal(
         [
             unicode:characters_to_binary(AuxLegalDir),
@@ -258,9 +258,9 @@ export_legal_merges_buildroot_trees_and_preserves_readme_blocks(_Config) ->
         ]
     ).
 
-export_legal_includes_sources_when_requested(_Config) ->
-    {AuxLegalDir, MainLegalDir} = make_export_legal_inputs(),
-    ExportDir = filename:join(make_temp_dir("smelterl-legal-export-sources"), "legal-info"),
+export_legal_includes_sources_when_requested(Config) ->
+    {AuxLegalDir, MainLegalDir} = make_export_legal_inputs(Config),
+    ExportDir = filename:join(make_temp_dir(Config, "smelterl-legal-export-sources"), "legal-info"),
     ok = smelterl_legal:export_legal(
         [
             unicode:characters_to_binary(AuxLegalDir),
@@ -277,9 +277,9 @@ export_legal_includes_sources_when_requested(_Config) ->
         [<<"sources/">>, <<"host-sources/">>]
     ).
 
-export_legal_rejects_existing_export_directory(_Config) ->
-    {AuxLegalDir, MainLegalDir} = make_export_legal_inputs(),
-    ExportDir = make_temp_dir("smelterl-legal-export-existing"),
+export_legal_rejects_existing_export_directory(Config) ->
+    {AuxLegalDir, MainLegalDir} = make_export_legal_inputs(Config),
+    ExportDir = make_temp_dir(Config, "smelterl-legal-export-existing"),
     {error, {export_exists, _Path}} = smelterl_legal:export_legal(
         [
             unicode:characters_to_binary(AuxLegalDir),
@@ -422,8 +422,8 @@ parse_legal_rejects_malformed_manifest(_Config) ->
     {error, {missing_manifest, LegalPath, _Detail}} =
         smelterl_legal:parse_legal(LegalPath).
 
-make_export_legal_inputs() ->
-    BaseDir = make_temp_dir("smelterl-legal-export-inputs"),
+make_export_legal_inputs(Config) ->
+    BaseDir = make_temp_dir(Config, "smelterl-legal-export-inputs"),
     AuxLegalDir = filename:join(BaseDir, "targets/aux_alpha/workspace/legal-info"),
     MainLegalDir = filename:join(BaseDir, "targets/main/workspace/legal-info"),
     write_export_input(
@@ -565,11 +565,33 @@ assert_contains(Haystack, Needle) ->
     end.
 
 make_temp_dir(Prefix) ->
-    Base = os:getenv("TMPDIR", "/tmp"),
-    Unique = integer_to_list(erlang:unique_integer([positive])),
+    make_temp_dir(undefined, Prefix).
+
+make_temp_dir(Config, Prefix) ->
+    Base0 =
+        case Config of
+            undefined ->
+                os:getenv("TMPDIR", "/tmp");
+            _ ->
+                proplists:get_value(priv_dir, Config, os:getenv("TMPDIR", "/tmp"))
+        end,
+    Base = filename:absname(Base0),
+    ok = filelib:ensure_dir(filename:join(Base, "dummy")),
+    make_temp_dir_attempt(Base, Prefix, 0).
+
+make_temp_dir_attempt(_Base, Prefix, Attempt) when Attempt >= 64 ->
+    ct:fail("Unable to create unique temp dir for prefix ~ts after ~B attempts", [Prefix, Attempt]);
+make_temp_dir_attempt(Base, Prefix, Attempt) ->
+    Unique = integer_to_list(erlang:unique_integer([positive, monotonic])),
     Path = filename:join(Base, Prefix ++ "-" ++ Unique),
-    ok = filelib:ensure_dir(filename:join(Path, "dummy")),
-    Path.
+    case file:make_dir(Path) of
+        ok ->
+            Path;
+        {error, eexist} ->
+            make_temp_dir_attempt(Base, Prefix, Attempt + 1);
+        {error, Reason} ->
+            ct:fail("Failed to create temp dir ~ts: ~tp", [Path, Reason])
+    end.
 
 write_manifest(Path, Lines) ->
     file:write_file(Path, Lines).

@@ -215,6 +215,15 @@ Backlog/process note:
 
 ## Phase 2: Smelterl Generate Pipeline (original Alloy Phase 4)
 
+- [x] **Task 4.11: Smelterl legal-suite temp-dir flake hardening**
+  - Scope: Remove intermittent `export_exists` failures in
+    `smelterl_legal_SUITE` by hardening test temp-directory creation and
+    export-path isolation across repeated/local CI runs.
+  - Tests: `rebar3 as test ct --suite test/smelterl_legal_SUITE.erl` plus a
+    repeated run of that suite to confirm non-flaky behavior.
+  - Done when: Legal-suite export tests no longer depend on accidental `/tmp`
+    path reuse and remain stable across reruns.
+
 
 - [x] **Task 4.1: `smelterl_cmd_generate` skeleton and option validation**
   - Scope: Selected-target generation, main-only option enforcement.
