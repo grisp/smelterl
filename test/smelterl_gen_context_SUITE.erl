@@ -304,7 +304,7 @@ sample_motherlode() ->
                 nugget_relpath => <<"aux_root">>,
                 name => <<"Aux Initramfs">>,
                 description => <<"Auxiliary initramfs">>,
-                version => <<"0.2.0">>,
+                version => <<"0.1.1">>,
                 hooks => [
                     {pre_build, <<"scripts/pre-build.sh">>, auxiliary},
                     {post_build, <<"scripts/post-build.sh">>, aux_init},

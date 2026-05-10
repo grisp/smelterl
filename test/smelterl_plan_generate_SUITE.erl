@@ -6,14 +6,16 @@
 -export([
     plan_then_generate_main_and_auxiliary_from_sample_motherlode/1,
     generate_uses_serialized_plan_after_motherlode_mutation/1,
-    escriptized_plan_uses_embedded_priv/1
+    escriptized_plan_uses_embedded_priv/1,
+    escriptized_plan_propagates_non_zero_exit_status_on_invalid_motherlode/1
 ]).
 
 all() ->
     [
         plan_then_generate_main_and_auxiliary_from_sample_motherlode,
         generate_uses_serialized_plan_after_motherlode_mutation,
-        escriptized_plan_uses_embedded_priv
+        escriptized_plan_uses_embedded_priv,
+        escriptized_plan_propagates_non_zero_exit_status_on_invalid_motherlode
     ].
 
 plan_then_generate_main_and_auxiliary_from_sample_motherlode(_Config) ->
@@ -320,6 +322,36 @@ escriptized_plan_uses_embedded_priv(_Config) ->
         false -> ct:fail("Expected plan output at ~ts", [PlanPath])
     end.
 
+escriptized_plan_propagates_non_zero_exit_status_on_invalid_motherlode(_Config) ->
+    RootDir = project_root(),
+    OutputDir = make_temp_dir("smelterl-escript-invalid-motherlode"),
+    MotherlodeDir = filename:join(OutputDir, "motherlode"),
+    RepoDir = filename:join(MotherlodeDir, "builtin"),
+    PlanPath = filename:join(OutputDir, "build_plan.term"),
+    ok = ensure_file(
+        filename:join(RepoDir, ".nuggets"),
+        <<"{nugget_registry, <<\"1.0\">>, [{nuggets, [<<\"missing.nugget\">>]}]}.\n">>
+    ),
+    ok = ensure_escriptized_binary(RootDir),
+    EscriptPath = filename:join([RootDir, "_build", "default", "bin", "smelterl"]),
+    {Status, Output} = run_executable(
+        EscriptPath,
+        [
+            "plan",
+            "--product", "demo",
+            "--motherlode", MotherlodeDir,
+            "--output-plan", PlanPath
+        ],
+        RootDir
+    ),
+    case Status of
+        0 ->
+            ct:fail("Expected non-zero escript exit status for invalid motherlode");
+        _ ->
+            ok
+    end,
+    assert_contains(Output, <<"does not exist">>).
+
 run_main(Argv) ->
     ScriptDir = filename:dirname(code:which(?MODULE)),
     SmelterlEbin = filename:join(filename:dirname(ScriptDir), "ebin"),
@@ -570,7 +602,7 @@ aux_alpha_root_nugget_contents() ->
         "    {category, feature},\n"
         "    {name, <<\"Aux Alpha Root\">>},\n"
         "    {description, <<\"Auxiliary initramfs builder\">>},\n"
-        "    {version, <<\"0.2.0\">>},\n"
+        "    {version, <<\"0.1.1\">>},\n"
         "    {config, [{initramfs_mode, <<\"gzip\">>}]},\n"
         "    {hooks, [{pre_build, <<\"scripts/pre-build.sh\">>}]},\n"
         "    {sdk_outputs, [\n"

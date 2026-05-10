@@ -8,6 +8,9 @@ and this project adheres to Semantic Versioning.
 ## [Unreleased]
 
 ### Added
+- Added a command-level regression in `smelterl_plan_generate_SUITE` that runs
+  the built `smelterl` escript against invalid motherlode metadata and asserts
+  a non-zero process exit status.
 - Added build-time asset packaging for the `smelterl` escript: generated
   `priv/build_info.term`, archive-aware `priv/` loading helpers, a post-build
   embed step for `priv/`, and Common Test coverage proving a relocated
@@ -120,6 +123,12 @@ and this project adheres to Semantic Versioning.
 - Added an initial standalone `smelterl` OTP project skeleton with a real
   escript entrypoint, CLI dispatch, `plan` command handler, and Common Test
   coverage for `plan` option validation and stderr/status behavior.
+
+### Changed
+- Changed `smelterl:main/1` to terminate with `halt(Status)` from
+  `smelterl_cli:run/2`, so the standalone escript now propagates command
+  failures through process exit codes instead of always exiting with status 0.
+- Bumped the Smelterl application version from `0.1.0` to `0.1.1`.
 
 ### Changed
 - Updated `smelterl plan` and `smelterl generate` to honor `--log`,

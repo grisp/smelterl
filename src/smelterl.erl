@@ -246,16 +246,16 @@ and the version string is shown by `--version`.
 -doc """
 Run the `smelterl` command-line entrypoint for one argv list.
 
-Returns the process exit status that the outer escript wrapper should use.
+Run CLI dispatch and terminate the VM with the resulting process status.
 """.
--spec main([string()]) -> integer().
+-spec main([string()]) -> no_return().
 main(Argv) ->
     ok = ensure_application_loaded(),
     Config = #{
         command_handlers => command_handlers(),
         version => version()
     },
-    smelterl_cli:run(Argv, Config).
+    erlang:halt(smelterl_cli:run(Argv, Config)).
 
 
 %=== INTERNAL FUNCTIONS ========================================================

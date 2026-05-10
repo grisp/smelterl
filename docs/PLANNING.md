@@ -221,7 +221,7 @@ Backlog/process note:
 
 ## Phase 3: Standalone Runtime Robustness Follow-ups
 
-- [ ] **Task 4.12: Make `smelterl` escript exit non-zero on command failures**
+- [x] **Task 4.12: Make `smelterl` escript exit non-zero on command failures**
   - Scope: Fix the standalone escript entrypoint so command return codes are
     propagated to process exit status (for example `smelterl plan` must exit
     non-zero when metadata parsing/loading fails).
