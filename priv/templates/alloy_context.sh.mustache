@@ -33,6 +33,7 @@ export ALLOY_FIRMWARE_VARIANTS=({{{firmware_variants_items}}})
 {{#vars}}
 export {{name}}={{{value}}}
 {{/vars}}
+
 {{/nuggets}}
 {{#has_any_config}}
 ## Configuration ##
@@ -42,9 +43,12 @@ export {{name}}={{{value}}}
 {{#vars}}
 export {{name}}={{{value}}}
 {{/vars}}
+
 {{/config_sections}}
+
 {{#has_global_config}}
-# Consolidated configuration
+## Consolidated configuration ##
+
 {{#global_config_vars}}
 export {{name}}={{{value}}}
 {{/global_config_vars}}
@@ -61,6 +65,7 @@ ALLOY_NUGGET_ORDER=({{{nugget_order_items}}})
 {{#firmware_hook_arrays}}
 {{name}}=({{{items}}})
 {{/firmware_hook_arrays}}
+
 ## Filesystem Priorities ##
 
 {{#fs_priority_vars}}

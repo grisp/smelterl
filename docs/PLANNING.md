@@ -218,6 +218,20 @@ Backlog/process note:
 - [x] **Task 4.11: Smelterl legal-suite temp-dir flake hardening**
   - Scope: Remove intermittent `export_exists` failures in
     `smelterl_legal_SUITE` by hardening test temp-directory creation and
+
+## Phase 3: Standalone Runtime Robustness Follow-ups
+
+- [ ] **Task 4.12: Make `smelterl` escript exit non-zero on command failures**
+  - Scope: Fix the standalone escript entrypoint so command return codes are
+    propagated to process exit status (for example `smelterl plan` must exit
+    non-zero when metadata parsing/loading fails).
+  - Scope: Ensure packaged `artefacts/tools/smelterl-*` behavior matches
+    `smelterl:main/1` status semantics used in tests (`halt(Status)` behavior).
+  - Tests: Add a command-level regression that executes the built escript
+    against invalid motherlode metadata and asserts non-zero exit.
+  - Done when: Fatal planner errors return non-zero exit status from the
+    shipped executable, and Alloy can reliably fail fast on command status
+    alone.
     export-path isolation across repeated/local CI runs.
   - Tests: `rebar3 as test ct --suite test/smelterl_legal_SUITE.erl` plus a
     repeated run of that suite to confirm non-flaky behavior.

@@ -39,7 +39,23 @@ render_main_context_includes_main_only_sections(_Config) ->
     ),
     assert_contains(
         Output,
+        <<"export ALLOY_NUGGET_DEMO_PRODUCT_VERSION=\"9.9.9\"\n\n## Configuration ##">>
+    ),
+    assert_contains(
+        Output,
+        <<"export ALLOY_NUGGET_DEMO_PRODUCT_CONFIG_DEVICE_NAME=\"demo-box\"">>
+    ),
+    assert_contains(
+        Output,
+        <<"## Consolidated configuration ##">>
+    ),
+    assert_contains(
+        Output,
         <<"export ALLOY_CONFIG_PLATFORM_MODE=\"imx8\"\n\n## Registries ##">>
+    ),
+    assert_contains(
+        Output,
+        <<"ALLOY_POST_FIRMWARE_HOOKS_SECURE=(\"demo_product:scripts/post-firmware.sh\")\n\n## Filesystem Priorities ##">>
     ),
     assert_contains(
         Output,
